@@ -369,32 +369,60 @@ app.post('/api/open-folder', (req, res) => {
   if (!folderPath) return res.status(400).json({ error: 'folderPath required' });
 
   // Normalize path with Windows backslashes
-  const winPath = path.resolve(folderPath.replace(/\//g, '\\'));
+  let winPath = path.resolve(folderPath.replace(/\//g, '\\'));
 
-  function launchExplorer(args) {
+  function launchExplorer(target, isFile) {
     try {
-      const argStr = args.map(a => `"${a}"`).join(' ');
-      exec(`explorer.exe ${argStr}`, { windowsHide: false }, () => {});
+      if (isFile) {
+        const child = spawn('explorer.exe', [`/select,${target}`], { detached: true, stdio: 'ignore' });
+        child.unref();
+      } else {
+        const child = spawn('explorer.exe', [target], { detached: true, stdio: 'ignore' });
+        child.unref();
+      }
       return true;
     } catch (e) {
-      console.warn('explorer launch error:', e.message);
-      return false;
+      console.warn('spawn explorer error, trying fallback:', e.message);
+      try {
+        const shellCmd = isFile ? `explorer.exe /select,"${target}"` : `start "" "${target}"`;
+        exec(shellCmd, { shell: 'cmd.exe', windowsHide: false }, () => {});
+        return true;
+      } catch (err2) {
+        return false;
+      }
+    }
+  }
+
+  // Check candidate paths if exact winPath does not exist
+  if (!fs.existsSync(winPath)) {
+    const parentCandidate = path.resolve(__dirname, '..', folderPath);
+    if (fs.existsSync(parentCandidate)) {
+      winPath = parentCandidate;
+    } else {
+      const tempCandidate = path.join(__dirname, 'temp', path.basename(folderPath));
+      if (fs.existsSync(tempCandidate)) {
+        winPath = tempCandidate;
+      }
     }
   }
 
   if (fs.existsSync(winPath)) {
     const stat = fs.statSync(winPath);
-    const targetDir = stat.isFile() ? path.dirname(winPath) : winPath;
-    launchExplorer([targetDir]);
-    return res.json({ ok: true, type: 'directory', path: targetDir });
+    if (stat.isFile()) {
+      launchExplorer(winPath, true);
+      return res.json({ ok: true, type: 'file', path: winPath });
+    } else {
+      launchExplorer(winPath, false);
+      return res.json({ ok: true, type: 'directory', path: winPath });
+    }
   } else {
-    // If exact target doesn't exist yet, try its parent directory
+    // If path is a folder that might just need its parent
     const parentDir = path.dirname(winPath);
     if (fs.existsSync(parentDir)) {
-      launchExplorer([parentDir]);
+      launchExplorer(parentDir, false);
       return res.json({ ok: true, type: 'parent_directory', path: parentDir });
     }
-    launchExplorer([winPath]);
+    launchExplorer(winPath, false);
     res.json({ ok: true, type: 'fallback', path: winPath });
   }
 });
