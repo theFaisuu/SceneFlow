@@ -238,8 +238,8 @@ async function render(job, onProgress, jobId) {
 
   progress('Preparing', 2, 'Analyzing clips...');
 
-  // ── Step 2: Render clips in batches of 10 ───────────────────────────────
-  const BATCH_SIZE = 10;
+  // ── Step 2: Render clips in compact batches for low RAM & butter-smooth zoom ───
+  const BATCH_SIZE = 4;
   const batches = [];
   for (let i = 0; i < clips.length; i += BATCH_SIZE) {
     batches.push(clips.slice(i, i + BATCH_SIZE));
@@ -284,7 +284,8 @@ async function render(job, onProgress, jobId) {
       let f;
       if (motion !== 'none' && clip.type !== 'gap') {
         const zoompanFilter = buildZoompan(motion, dur, w, h, motionSpeed, fps);
-        const scaleFirst = buildScaleFilter(w, h, fitMode);
+        // 2x upscale eliminates integer sub-pixel rounding jitter so zoom & pan are completely smooth
+        const scaleFirst = buildScaleFilter(w * 2, h * 2, fitMode);
         f = `[${i}:v]${scaleFirst},${zoompanFilter},setpts=PTS-STARTPTS,fps=${fps},trim=duration=${dur}[v${i}]`;
       } else if (clip.type === 'gap') {
         f = `[${i}:v]scale=${w}:${h},fps=${fps},trim=duration=${dur}[v${i}]`;
@@ -304,7 +305,7 @@ async function render(job, onProgress, jobId) {
     args.push('-map', '[outv]');
     args.push('-c:v', encoder);
     if (encoder === 'libx264') {
-      args.push('-crf', String(crf), '-preset', 'fast');
+      args.push('-crf', String(crf), '-preset', 'veryfast');
     } else {
       args.push('-b:v', bitrate);
     }
