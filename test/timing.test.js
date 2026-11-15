@@ -18,6 +18,7 @@ const {
   validateRules,
   splitTranscript,
   exportCaptionsTxt,
+  exportSRT,
   exportFilenamesListTxt
 } = require('../src/timing.js');
 
@@ -266,6 +267,48 @@ test('exports filenames list .txt with tab separator', () => {
   const lines = txt.split('\n');
   assert.equal(lines[0], '0_00—0_03.png\tFirst line');
   assert.equal(lines[1], '0_03—0_06.png\t[Silent]');
+});
+
+test('exportSRT outputs valid SubRip timestamps with word timings and CRLF endings', () => {
+  const sampleBlocks = [
+    {
+      number: 1,
+      start: 0,
+      end: 3,
+      caption: "You've been exhausted all day and yet",
+      silent: false,
+      words: [
+        { word: "You've", start: 0.18, end: 0.52 },
+        { word: "yet", start: 2.35, end: 2.84 }
+      ]
+    },
+    {
+      number: 2,
+      start: 3,
+      end: 6,
+      caption: "the moment your head hits the",
+      silent: false,
+      words: [
+        { word: "the", start: 3.12, end: 3.30 },
+        { word: "the", start: 5.40, end: 5.75 }
+      ]
+    }
+  ];
+
+  const srt = exportSRT(sampleBlocks);
+  assert.ok(srt.includes('00:00:00,180 --> 00:00:02,840'), 'Expected accurate word start/end timing in subtitle 1');
+  assert.ok(srt.includes('00:00:03,120 --> 00:00:05,750'), 'Expected accurate word start/end timing in subtitle 2');
+  assert.ok(srt.includes('\r\n'), 'Expected CRLF line endings for Windows/video editors');
+});
+
+test('Timing export menu only contains Captions (.txt) and Subtitles (.srt)', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  assert.ok(html.includes('data-export="captions"'), 'Expected Captions (.txt) in export menu');
+  assert.ok(html.includes('data-export="srt"'), 'Expected Subtitles (.srt) in export menu');
+  assert.equal(html.includes('data-export="filenames"'), false, 'Filenames list must be removed');
+  assert.equal(html.includes('data-export="csv"'), false, 'Spreadsheet (.csv) must be removed');
+  assert.equal(html.includes('data-export="blocks_json"'), false, 'Blocks Data (.json) must be removed');
+  assert.equal(html.includes('data-export="words_json"'), false, 'Word Timings (.json) must be removed');
 });
 
 test('Timing page HTML and scripts reflect streamlined UI, Paste Script, full waveform, and no Whisper names during progress', () => {

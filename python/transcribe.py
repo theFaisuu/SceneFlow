@@ -132,18 +132,24 @@ def main():
                 "words": seg_words
             })
 
-            # Progress update for long audio
-            if total_duration > 0:
-                pct = min(100, round((segment.end / total_duration) * 100, 1))
-                elapsed = time.time() - start_time
-                eta = round((elapsed / max(0.01, segment.end)) * (total_duration - segment.end)) if segment.end > 0 else 0
-                print(json.dumps({
-                    "type": "progress",
-                    "percent": pct,
-                    "processedSec": round(segment.end, 1),
-                    "totalSec": round(total_duration, 1),
-                    "etaSec": max(0, eta)
-                }), flush=True)
+            # Progress and live segment streaming
+            pct = min(100, round((segment.end / total_duration) * 100, 1)) if total_duration > 0 else 0
+            elapsed = time.time() - start_time
+            eta = round((elapsed / max(0.01, segment.end)) * (total_duration - segment.end)) if (total_duration > 0 and segment.end > 0) else 0
+            print(json.dumps({
+                "type": "segment",
+                "percent": pct,
+                "processedSec": round(segment.end, 1),
+                "totalSec": round(total_duration, 1),
+                "etaSec": max(0, eta),
+                "segment": {
+                    "id": segment.id,
+                    "start": round(segment.start, 3),
+                    "end": round(segment.end, 3),
+                    "text": segment.text.strip(),
+                    "words": seg_words
+                }
+            }), flush=True)
 
         result = {
             "type": "done",

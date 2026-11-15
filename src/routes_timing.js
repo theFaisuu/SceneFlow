@@ -340,8 +340,9 @@ router.post(['/api/timing/export', '/api/splitter/export'], (req, res) => {
       filename = 'sceneflow_captions.txt';
       break;
     case 'srt':
-      content = exportSRT(blocks);
+      content = exportSRT(blocks, words);
       filename = 'sceneflow_subtitles.srt';
+      mimeType = 'application/x-subrip; charset=utf-8';
       break;
     case 'filenames':
       content = exportFilenamesListTxt(blocks);

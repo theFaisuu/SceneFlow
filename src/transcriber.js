@@ -147,7 +147,7 @@ function transcribeAudio(audioPath, options = {}, onProgress = null) {
         if (!trimmed.startsWith('{')) continue;
         try {
           const msg = JSON.parse(trimmed);
-          if (msg.type === 'progress' && onProgress) {
+          if ((msg.type === 'progress' || msg.type === 'segment' || msg.segment) && onProgress) {
             onProgress(msg);
           } else if (msg.type === 'done') {
             finalResult = msg;

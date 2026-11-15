@@ -527,26 +527,68 @@ function exportCaptionsTxt(blocks) {
 }
 
 /**
- * Export 2: SRT file
+ * Export 2: SRT file (SubRip Subtitle format)
+ * Generates accurate subtitle entries with true word speech timings,
+ * proper sequential indices, CRLF line endings, and minimum display durations.
  */
-function exportSRT(blocks) {
+function exportSRT(blocks, allWords = []) {
+  if (!Array.isArray(blocks) || blocks.length === 0) return '';
+
   const formatSrtTime = (sec) => {
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = Math.floor(sec % 60);
-    const ms = Math.round((sec % 1) * 1000);
+    sec = Math.max(0, Number(sec) || 0);
+    const totalMs = Math.round(sec * 1000);
+    const h = Math.floor(totalMs / 3600000);
+    const m = Math.floor((totalMs % 3600000) / 60000);
+    const s = Math.floor((totalMs % 60000) / 1000);
+    const ms = totalMs % 1000;
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
   };
 
   const entries = [];
   let srtIndex = 1;
-  for (const b of blocks) {
+  let prevEndTime = 0;
+
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
     if (b.silent || !b.caption || !b.caption.trim()) continue;
     const cleanText = b.caption.replace(/[\r\n]+/g, ' ').trim();
-    entries.push(`${srtIndex}\n${formatSrtTime(b.start)} --> ${formatSrtTime(b.end)}\n${cleanText}\n`);
+    if (!cleanText) continue;
+
+    // Use precise word-level start/end timestamps from the block words or words array
+    let startSec = typeof b.start === 'number' ? b.start : 0;
+    let endSec = typeof b.end === 'number' ? b.end : startSec + 3;
+
+    if (b.words && Array.isArray(b.words) && b.words.length > 0) {
+      const firstW = b.words[0];
+      const lastW = b.words[b.words.length - 1];
+      if (typeof firstW.start === 'number' && typeof lastW.end === 'number') {
+        startSec = firstW.start;
+        endSec = lastW.end;
+      }
+    } else if (Array.isArray(allWords) && allWords.length > 0) {
+      const matchWords = allWords.filter(w => w.start >= b.start - 0.2 && w.end <= b.end + 0.5);
+      if (matchWords.length > 0) {
+        startSec = matchWords[0].start;
+        endSec = matchWords[matchWords.length - 1].end;
+      }
+    }
+
+    // Ensure strictly forward monotonic timestamps
+    if (startSec < prevEndTime) {
+      startSec = prevEndTime;
+    }
+    // Subtitle must stay visible for at least 0.35s
+    if (endSec <= startSec) {
+      endSec = startSec + Math.max(0.35, Math.min(3.0, (b.end - b.start) || 1.0));
+    }
+
+    prevEndTime = endSec;
+
+    entries.push(`${srtIndex}\r\n${formatSrtTime(startSec)} --> ${formatSrtTime(endSec)}\r\n${cleanText}\r\n`);
     srtIndex++;
   }
-  return entries.join('\n');
+
+  return entries.length > 0 ? entries.join('\r\n') : '';
 }
 
 /**

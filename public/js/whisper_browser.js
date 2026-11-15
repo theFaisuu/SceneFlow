@@ -359,9 +359,11 @@ export async function transcribeInBrowser(audioFile, options = {}, onProgress = 
     });
   }
 
-  // Extract word-level timestamps
+  // Extract word-level timestamps & segments
   const words = [];
+  const segments = [];
   if (result.chunks && Array.isArray(result.chunks)) {
+    let segIdx = 1;
     for (const chunk of result.chunks) {
       const text = (chunk.text || '').trim();
       if (!text) continue;
@@ -371,41 +373,67 @@ export async function transcribeInBrowser(audioFile, options = {}, onProgress = 
         : (start + 0.35);
       const chunkDur = Math.max(0.1, end - start);
 
+      const segWords = [];
       if (chunk.words && Array.isArray(chunk.words) && chunk.words.length > 0) {
         for (const w of chunk.words) {
           const wText = (w.word || w.text || '').trim();
           if (!wText) continue;
           const wStart = Array.isArray(w.timestamp) ? (w.timestamp[0] ?? start) : start;
           const wEnd = Array.isArray(w.timestamp) ? (w.timestamp[1] ?? (wStart + 0.3)) : (wStart + 0.3);
-          words.push({
+          const wObj = {
             word: wText,
             start: Math.round(wStart * 100) / 100,
             end: Math.round(wEnd * 100) / 100,
             probability: 0.95
-          });
+          };
+          words.push(wObj);
+          segWords.push(wObj);
         }
       } else {
         const rawTokens = text.split(/\s+/).filter(Boolean);
         if (rawTokens.length <= 1) {
-          words.push({
+          const wObj = {
             word: text,
             start: Math.round(start * 100) / 100,
             end: Math.round(end * 100) / 100,
             probability: 0.95
-          });
+          };
+          words.push(wObj);
+          segWords.push(wObj);
         } else {
           const durPerWord = chunkDur / rawTokens.length;
           rawTokens.forEach((rw, idx) => {
             const wStart = start + idx * durPerWord;
             const wEnd = start + (idx + 1) * durPerWord;
-            words.push({
+            const wObj = {
               word: rw,
               start: Math.round(wStart * 100) / 100,
               end: Math.round(wEnd * 100) / 100,
               probability: 0.95
-            });
+            };
+            words.push(wObj);
+            segWords.push(wObj);
           });
         }
+      }
+
+      const segObj = {
+        id: segIdx++,
+        start: Math.round(start * 100) / 100,
+        end: Math.round(end * 100) / 100,
+        text,
+        words: segWords
+      };
+      segments.push(segObj);
+      if (onProgress) {
+        try {
+          onProgress({
+            type: 'segment',
+            segment: segObj,
+            percent: 90,
+            text: `Generated: "${text.slice(0, 35)}..."`
+          });
+        } catch {}
       }
     }
   }
@@ -427,6 +455,7 @@ export async function transcribeInBrowser(audioFile, options = {}, onProgress = 
   return {
     ok: true,
     words,
+    segments,
     duration: Math.round(duration * 100) / 100,
     text: result.text
   };

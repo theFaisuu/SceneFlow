@@ -947,7 +947,73 @@ function bindActionButtons() {
   }
 }
 
+let liveSegments = [];
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function handleLiveSegmentGenerated(seg) {
+  if (!seg || !seg.text) return;
+  const resultsCard = $('sp-results-card');
+  const tbody = $('sp-blocks-tbody');
+  const liveCount = $('sp-live-count');
+  if (!resultsCard || !tbody) return;
+
+  resultsCard.classList.remove('hidden');
+
+  // Avoid adding exact duplicate segments
+  if (liveSegments.some(s => s.id === seg.id || (Math.abs(s.start - seg.start) < 0.1 && s.text.trim() === seg.text.trim()))) {
+    return;
+  }
+  liveSegments.push(seg);
+
+  const idx = liveSegments.length;
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-seg-id', seg.id ?? idx);
+  tr.className = 'hover:bg-obsidian-elevated/40 transition bg-teal-500/[0.04] border-b border-obsidian-border';
+
+  const startFormatted = formatCaptionTime(seg.start);
+  const endFormatted = formatCaptionTime(seg.end);
+
+  tr.innerHTML = `
+    <td class="col-num py-2 px-3 font-mono text-teal-400 font-bold">${idx}</td>
+    <td class="col-time py-2 px-3 font-mono text-slate-300 text-xs">${startFormatted}</td>
+    <td class="col-time py-2 px-3 font-mono text-slate-300 text-xs">${endFormatted}</td>
+    <td class="col-caption py-2 px-3">
+      <div class="flex items-center gap-2">
+        <span class="text-slate-100 text-xs font-sans">${escapeHtml(seg.text)}</span>
+        <span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-teal-500/15 text-teal-300 border border-teal-500/30 shrink-0">Live</span>
+      </div>
+    </td>
+    <td class="col-actions py-2 px-3 text-right">
+      <span class="text-[10px] text-teal-400 font-mono">Generating…</span>
+    </td>
+  `;
+
+  tbody.appendChild(tr);
+
+  // Smoothly scroll the container to the newly generated caption line
+  const wrap = tr.closest('.results-table-wrap') || tbody.parentElement;
+  if (wrap) {
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+
+  if (liveCount) {
+    liveCount.textContent = `${liveSegments.length} captions generated so far…`;
+  }
+}
+
 async function runTranscription() {
+  liveSegments = [];
+  const tbody = $('sp-blocks-tbody');
+  if (tbody) tbody.innerHTML = '';
   const progCard = $('sp-progress-card');
   const progBar = $('sp-progress-bar');
   const progText = $('sp-progress-status-text');
@@ -990,10 +1056,16 @@ async function runTranscription() {
             progProcessed.textContent = `${p.processedSec}s / ${p.totalSec}s`;
           }
           if (p.etaSec) progEta.textContent = `ETA: ${p.etaSec}s`;
+          if (p.segment && p.segment.text) {
+            handleLiveSegmentGenerated(p.segment);
+          }
         }
       );
 
       if (clientResult && clientResult.ok && clientResult.words && clientResult.words.length > 0) {
+        if (clientResult.segments && clientResult.segments.length > 0) {
+          clientResult.segments.forEach(seg => handleLiveSegmentGenerated(seg));
+        }
         progBar.style.width = '100%';
         progPct.textContent = '100%';
         progText.textContent = 'Completed! Formatting blocks...';
@@ -1075,13 +1147,17 @@ async function runTranscription() {
     es.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
-        if (msg.type === 'progress') {
+        if (msg.type === 'progress' || msg.type === 'segment') {
           const pct = Math.min(100, Math.max(0, msg.percent || 0));
           progBar.style.width = `${pct}%`;
           progPct.textContent = `${pct}%`;
           progProcessed.textContent = `${msg.processedSec}s / ${msg.totalSec}s`;
           if (msg.etaSec) progEta.textContent = `ETA: ${msg.etaSec}s`;
           progText.textContent = `Transcribing voiceover audio... (${msg.processedSec}s / ${msg.totalSec}s)`;
+
+          if (msg.segment && msg.segment.text) {
+            handleLiveSegmentGenerated(msg.segment);
+          }
         } else if (msg.type === 'done') {
           es.close();
           progBar.style.width = '100%';
