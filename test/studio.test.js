@@ -206,6 +206,14 @@ test('Studio Section 03 HTML & captions.js support full line default, No Caption
   assert.doesNotMatch(sec3, /<button[^>]*class="template-card active[^"]*"[^>]*data-style="bold"/, 'Bold Pop card should not be active by default');
   assert.match(sec3, /<textarea[^>]*id="caption-text"[^>]*class="[^"]*flex-1/, 'Caption textarea should use flex-1 to stretch to bottom footer');
 
+  assert.match(sec3, /<select[^>]*id="s-caption-segment"/, 'Segment per line dropdown should be present in Section 03 header');
+  assert.match(sec3, /<option[^>]*value="all"[^>]*selected>Full Line \(Default\)<\/option>/, 'Segment selector should have Full Line (Default) selected by default');
+  assert.match(sec3, /<option[^>]*value="smart">Smart \(2-4 Words\)<\/option>/, 'Segment selector should include Smart option');
+  assert.match(sec3, /<option[^>]*value="1">1 Word \(Pop\)<\/option>/, 'Segment selector should include 1 Word option');
+  assert.match(sec3, /<option[^>]*value="2">2 Words<\/option>/, 'Segment selector should include 2 Words option');
+  assert.match(sec3, /<option[^>]*value="3">3 Words<\/option>/, 'Segment selector should include 3 Words option');
+  assert.match(sec3, /<option[^>]*value="4">4 Words<\/option>/, 'Segment selector should include 4 Words option');
+
   const sampleWords = 'You have been exhausted all day long'.split(' ').map((w, i) => ({
     word: w,
     startSec: i * 0.4,
@@ -215,6 +223,24 @@ test('Studio Section 03 HTML & captions.js support full line default, No Caption
     lineEnd: 2.8,
   }));
   assert.equal(chunkWords(sampleWords).length, 1, 'Default chunkWords should keep the full line in 1 chunk');
+  assert.equal(chunkWords(sampleWords, 'all').length, 1, 'chunkWords with all should keep the full line in 1 chunk');
+  assert.equal(chunkWords(sampleWords, '1').length, 7, 'chunkWords with 1 should divide into 7 1-word chunks');
+  assert.equal(chunkWords(sampleWords, '2').length, 3, 'chunkWords with 2 should divide 7 words into 3 chunks [2, 2, 3] avoiding single-word orphans');
+  assert.equal(chunkWords(sampleWords, '3').length, 2, 'chunkWords with 3 should divide 7 words into 2 chunks [3, 4] avoiding single-word orphans');
+  assert.equal(chunkWords(sampleWords, 'smart').length, 2, 'chunkWords with smart should divide 7 words into 2 balanced chunks');
+
+  // Verify smart punctuation clause splitting
+  const clauseWords = "You've been exhausted all day, and yet your mind switches on".split(' ').map((w, i) => ({
+    word: w,
+    startSec: i * 0.3,
+    endSec: (i + 1) * 0.3,
+    lineIndex: 0,
+    lineStart: 0,
+    lineEnd: 3.3,
+  }));
+  const smartChunks = chunkWords(clauseWords, 'smart');
+  assert.equal(smartChunks.length, 4, 'Smart chunking should split 11 words at punctuation comma into 4 natural segments');
+  assert.equal(smartChunks[1].map(w => w.word).join(' '), 'all day,', 'Smart chunking should split at comma clause');
 
   const ass = generateASS(sampleWords, {
     style: 'beast',
@@ -229,6 +255,13 @@ test('Studio Section 03 HTML & captions.js support full line default, No Caption
 
   const assBold = generateASS(sampleWords, { style: 'bold' });
   assert.ok(assBold.includes('YOU HAVE BEEN EXHAUSTED ALL DAY LONG'), 'Bold ASS should render full line when wordsPerLine omitted');
+
+  const ass2Words = generateASS(sampleWords, { style: 'bold', wordsPerLine: '2' });
+  assert.ok(ass2Words.includes('YOU HAVE'), '2-words ASS should contain 2-word dialogue chunk');
+  assert.ok(!ass2Words.includes('YOU HAVE BEEN EXHAUSTED ALL DAY LONG'), '2-words ASS should NOT render entire sentence on single dialogue event');
+
+  const assSmart = generateASS(clauseWords, { style: 'bold', wordsPerLine: 'smart' });
+  assert.ok(assSmart.includes('ALL DAY,'), 'Smart ASS should contain natural clause segment');
 
   const sec5Start = html.indexOf('<!-- SECTION 5', sec4Start);
   assert.ok(sec5Start > sec4Start, 'Expected Studio Section 04 bounds');

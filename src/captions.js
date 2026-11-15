@@ -223,30 +223,66 @@ function buildASSStyle(style, color, size, position, videoWidth = 1920, videoHei
 
 function chunkWords(words, option = 'all') {
   if (!words || !words.length) return [];
-  if (option === 'all') return [words];
+  if (!option || option === 'all') return [words];
 
-  if (option === '3-4') {
+  // 1 word per line (single-word pop / focus)
+  if (option === '1' || option === 1) {
+    return words.map(w => [w]);
+  }
+
+  // Smart natural splitting: splits at natural clause punctuation, balances 2-4 words, avoids 1-word orphans
+  if (option === 'smart' || option === '3-4') {
     const n = words.length;
     if (n <= 4) return [words];
-    const numChunks = Math.ceil(n / 4);
-    const baseSize = Math.floor(n / numChunks);
-    const remainder = n % numChunks;
+
     const chunks = [];
-    let start = 0;
-    for (let c = 0; c < numChunks; c++) {
-      const size = baseSize + (c < remainder ? 1 : 0);
-      chunks.push(words.slice(start, start + size));
-      start += size;
+    let cur = [];
+
+    for (let i = 0; i < n; i++) {
+      const w = words[i];
+      cur.push(w);
+      const remaining = n - (i + 1);
+
+      // Check if word ends with clause/sentence punctuation
+      const rawText = (typeof w === 'string') ? w : (w.word || '');
+      const hasPausePunctuation = /[,\;:—\.\?!]$/.test(rawText.trim());
+
+      const hitNaturalPause = hasPausePunctuation && cur.length >= 2;
+      const hitMaxLength = cur.length >= 4;
+      const hitPreferredLength = cur.length >= 3;
+
+      // Break chunk if we hit natural pause, reached 4 words, or reached 3 words without leaving a 1-word orphan
+      if ((hitNaturalPause || hitMaxLength || (hitPreferredLength && remaining !== 1)) && remaining !== 1) {
+        chunks.push(cur);
+        cur = [];
+      }
     }
+
+    if (cur.length > 0) {
+      if (cur.length === 1 && chunks.length > 0) {
+        // Prevent single-word orphan by merging with the previous chunk
+        chunks[chunks.length - 1].push(...cur);
+      } else {
+        chunks.push(cur);
+      }
+    }
+
     return chunks;
   }
 
+  // Fixed word count: 2, 3, 4, etc.
   const chunkSize = parseInt(option, 10);
   if (!chunkSize || isNaN(chunkSize) || chunkSize <= 0) return [words];
 
   const chunks = [];
   for (let i = 0; i < words.length; i += chunkSize) {
-    chunks.push(words.slice(i, i + chunkSize));
+    const slice = words.slice(i, i + chunkSize);
+    // If the last chunk is a single orphan word and we have a preceding chunk, merge it
+    if (slice.length === 1 && chunks.length > 0) {
+      chunks[chunks.length - 1].push(...slice);
+    } else {
+      chunks.push(slice);
+    }
   }
   return chunks;
 }
