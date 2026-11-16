@@ -135,7 +135,7 @@ function initApiKeyUI() {
       return;
     }
     if (state.apiKey) {
-      apiHeaderSub.textContent = 'API Key saved in cookie';
+      apiHeaderSub.textContent = 'API Key saved securely';
       apiHeaderSub.className = 'text-[10px] text-[#14B8A6]';
     } else {
       apiHeaderSub.textContent = 'Groq API Key';
@@ -173,6 +173,24 @@ function initApiKeyUI() {
   updateKeyDisplay();
   // Auto-hide API section on load if key is already saved
   setApiSectionExpanded(!state.apiKey);
+
+  // Hydrate from server settings if not present in client, or sync to server if present
+  try {
+    fetch('/api/settings').then(r => r.json()).then(s => {
+      if (s && s.groqApiKey && !state.apiKey) {
+        state.apiKey = s.groqApiKey;
+        saveApiKeyCookie(s.groqApiKey);
+        updateKeyDisplay();
+        setApiSectionExpanded(false, 'API Key restored');
+      } else if (s && !s.groqApiKey && state.apiKey) {
+        fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ groqApiKey: state.apiKey })
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+  } catch {}
 
   if (apiToggle && apiBody) {
     apiToggle.onclick = () => {

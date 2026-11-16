@@ -56,8 +56,45 @@ const COOKIE_KEY_NAME = 'fish_audio_api_key';
 const COOKIE_MODEL_NAME = 'fish_audio_model';
 const COOKIE_VOICE_ID_NAME = 'fish_audio_voice_id';
 const COOKIE_CUSTOM_VOICES_NAME = 'fish_audio_custom_voices';
+const LS_KEY_NAME = 'sceneflow_fish_audio_api_key';
+const LS_MODEL_NAME = 'sceneflow_fish_audio_model';
+const LS_VOICE_ID_NAME = 'sceneflow_fish_audio_voice_id';
+const LS_CUSTOM_VOICES_NAME = 'sceneflow_fish_audio_custom_voices';
 
-// ── Cookie Helpers (SameSite=Strict, Secure on https, 1-Year Expiry) ──
+// ── Storage Helpers (LocalStorage + Cookies + Server File Sync) ──
+
+export function safeGetLS(key) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(key) || '';
+    }
+  } catch {}
+  return '';
+}
+
+export function safeSetLS(key, val) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      if (val === null || val === undefined || val === '') {
+        localStorage.removeItem(key);
+      } else {
+        localStorage.setItem(key, val);
+      }
+    }
+  } catch {}
+}
+
+export function syncVoiceSettingsToServer(patch) {
+  try {
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      }).catch(() => {});
+    }
+  } catch {}
+}
 
 export function getCookie(name) {
   if (typeof document === 'undefined') return '';
@@ -88,23 +125,35 @@ export function deleteCookie(name) {
 }
 
 export function getStoredFishApiKey() {
+  const ls = safeGetLS(LS_KEY_NAME) || safeGetLS(COOKIE_KEY_NAME);
+  if (ls) return ls;
   return getCookie(COOKIE_KEY_NAME);
 }
 
 export function saveFishApiKey(key) {
   const clean = (key || '').trim();
   if (!clean) {
+    safeSetLS(LS_KEY_NAME, '');
+    safeSetLS(COOKIE_KEY_NAME, '');
     deleteCookie(COOKIE_KEY_NAME);
+    syncVoiceSettingsToServer({ fishAudioApiKey: '' });
     return;
   }
+  safeSetLS(LS_KEY_NAME, clean);
   setCookie(COOKIE_KEY_NAME, clean, 365);
+  syncVoiceSettingsToServer({ fishAudioApiKey: clean });
 }
 
 export function removeFishApiKey() {
+  safeSetLS(LS_KEY_NAME, '');
+  safeSetLS(COOKIE_KEY_NAME, '');
   deleteCookie(COOKIE_KEY_NAME);
+  syncVoiceSettingsToServer({ fishAudioApiKey: '' });
 }
 
 export function getStoredFishModel() {
+  const ls = safeGetLS(LS_MODEL_NAME) || safeGetLS(COOKIE_MODEL_NAME);
+  if (ls && FISH_AUDIO_MODELS.some(m => m.id === ls)) return ls;
   const model = getCookie(COOKIE_MODEL_NAME);
   return model || DEFAULT_FISH_MODEL;
 }
@@ -112,13 +161,19 @@ export function getStoredFishModel() {
 export function saveFishModel(model) {
   const clean = (model || '').trim();
   if (!clean) {
+    safeSetLS(LS_MODEL_NAME, DEFAULT_FISH_MODEL);
     setCookie(COOKIE_MODEL_NAME, DEFAULT_FISH_MODEL, 365);
+    syncVoiceSettingsToServer({ fishAudioModel: DEFAULT_FISH_MODEL });
     return;
   }
+  safeSetLS(LS_MODEL_NAME, clean);
   setCookie(COOKIE_MODEL_NAME, clean, 365);
+  syncVoiceSettingsToServer({ fishAudioModel: clean });
 }
 
 export function getStoredVoiceId() {
+  const ls = safeGetLS(LS_VOICE_ID_NAME) || safeGetLS(COOKIE_VOICE_ID_NAME);
+  if (ls) return ls;
   const id = getCookie(COOKIE_VOICE_ID_NAME);
   return id || DEFAULT_VOICE_ID;
 }
@@ -126,10 +181,14 @@ export function getStoredVoiceId() {
 export function saveVoiceId(id) {
   const clean = (id || '').trim();
   if (!clean) {
+    safeSetLS(LS_VOICE_ID_NAME, '');
     deleteCookie(COOKIE_VOICE_ID_NAME);
+    syncVoiceSettingsToServer({ fishAudioVoiceId: '' });
     return;
   }
+  safeSetLS(LS_VOICE_ID_NAME, clean);
   setCookie(COOKIE_VOICE_ID_NAME, clean, 365);
+  syncVoiceSettingsToServer({ fishAudioVoiceId: clean });
 }
 
 function makeVoiceInitials(name) {
@@ -140,7 +199,8 @@ function makeVoiceInitials(name) {
 }
 
 export function getStoredCustomVoices() {
-  const raw = getCookie(COOKIE_CUSTOM_VOICES_NAME);
+  const lsRaw = safeGetLS(LS_CUSTOM_VOICES_NAME);
+  const raw = lsRaw || getCookie(COOKIE_CUSTOM_VOICES_NAME);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -177,7 +237,10 @@ export function saveCustomVoice({ id, name }) {
 
   // Cap list size so cookie stays well under 4KB browser limits
   const capped = list.slice(0, 12);
-  setCookie(COOKIE_CUSTOM_VOICES_NAME, JSON.stringify(capped.map(v => ({ id: v.id, name: v.name }))), 365);
+  const jsonStr = JSON.stringify(capped.map(v => ({ id: v.id, name: v.name })));
+  safeSetLS(LS_CUSTOM_VOICES_NAME, jsonStr);
+  setCookie(COOKIE_CUSTOM_VOICES_NAME, jsonStr, 365);
+  syncVoiceSettingsToServer({ customVoices: capped.map(v => ({ id: v.id, name: v.name })) });
   saveVoiceId(cleanId);
   return capped;
 }
@@ -186,9 +249,14 @@ export function removeCustomVoice(id) {
   const cleanId = (id || '').trim();
   const remaining = getStoredCustomVoices().filter(v => v.id !== cleanId);
   if (!remaining.length) {
+    safeSetLS(LS_CUSTOM_VOICES_NAME, '');
     deleteCookie(COOKIE_CUSTOM_VOICES_NAME);
+    syncVoiceSettingsToServer({ customVoices: [] });
   } else {
-    setCookie(COOKIE_CUSTOM_VOICES_NAME, JSON.stringify(remaining.map(v => ({ id: v.id, name: v.name }))), 365);
+    const jsonStr = JSON.stringify(remaining.map(v => ({ id: v.id, name: v.name })));
+    safeSetLS(LS_CUSTOM_VOICES_NAME, jsonStr);
+    setCookie(COOKIE_CUSTOM_VOICES_NAME, jsonStr, 365);
+    syncVoiceSettingsToServer({ customVoices: remaining.map(v => ({ id: v.id, name: v.name })) });
   }
   return remaining;
 }

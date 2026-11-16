@@ -224,6 +224,16 @@ async function checkModelStatus() {
   } catch (err) {
     console.warn('Could not check AI engine status:', err);
   }
+
+  // Also check server settings persistence for whisperCached
+  try {
+    const s = await fetch('/api/settings').then(r => r.json());
+    if (s) {
+      if (s.whisperFastCached) splitterState.fastCached = true;
+      if (s.whisperBestCached) splitterState.bestCached = true;
+    }
+  } catch {}
+
   renderModelStatusCard();
 }
 
@@ -334,14 +344,16 @@ async function startModelDownload(modelKey) {
     $('sp-dl-mb').classList.add('hidden');
   }
 
-  // If local backend AI engine is available, download cleanly to server models directory
-  if (splitterState.whisperEnv?.ready) {
-    try {
-      await fetch('/api/whisper/download', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: modelKey })
-      });
+  // Attempt server download first so model is saved to disk in models/
+  let serverDlSuccess = false;
+  try {
+    const postRes = await fetch('/api/whisper/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelKey })
+    }).then(r => r.json()).catch(() => null);
+
+    if (postRes && (postRes.ok || postRes.status === 'already_downloading' || postRes.status === 'started')) {
       await new Promise((resolve, reject) => {
         const es = new EventSource(`/api/whisper/download/${modelKey}/progress`);
         const btnCancel = $('btn-cancel-dl-model');
@@ -378,6 +390,7 @@ async function startModelDownload(modelKey) {
               }
             } else if (p.type === 'done') {
               es.close();
+              serverDlSuccess = true;
               resolve();
             } else if (p.type === 'error') {
               es.close();
@@ -387,38 +400,50 @@ async function startModelDownload(modelKey) {
         };
         es.onerror = () => { es.close(); reject(new Error('Download stream interrupted')); };
       });
-      await checkModelStatus();
-      return;
+    }
+  } catch (err) {
+    console.warn('Server model download fallback to in-browser engine:', err);
+  }
+
+  if (!serverDlSuccess) {
+    try {
+      await loadWhisperModel(modelKey, (p) => {
+        if (p.isDownloading) {
+          if ($('sp-dl-text')) $('sp-dl-text').textContent = `Downloading ${modelLabel} model…`;
+          if ($('sp-dl-bar')) $('sp-dl-bar').style.width = `${p.percent}%`;
+          if ($('sp-dl-pct')) $('sp-dl-pct').textContent = `${p.percent}%`;
+          if ($('sp-dl-mb')) {
+            $('sp-dl-mb').classList.remove('hidden');
+            $('sp-dl-mb').textContent = `${p.mbDownloaded} / ${p.mbTotal} MB`;
+          }
+        } else {
+          if ($('sp-dl-text')) $('sp-dl-text').textContent = `Preparing ${modelLabel} model…`;
+          if ($('sp-dl-mb')) {
+            $('sp-dl-mb').textContent = '';
+            $('sp-dl-mb').classList.add('hidden');
+          }
+        }
+      });
     } catch (err) {
-      console.warn('Server model download fallback:', err);
+      console.warn('Client-side model download warning:', err);
     }
   }
 
+  if (modelKey === 'best') splitterState.bestCached = true;
+  else splitterState.fastCached = true;
+
   try {
-    await loadWhisperModel(modelKey, (p) => {
-      if (p.isDownloading) {
-        if ($('sp-dl-text')) $('sp-dl-text').textContent = `Downloading ${modelLabel} model…`;
-        if ($('sp-dl-bar')) $('sp-dl-bar').style.width = `${p.percent}%`;
-        if ($('sp-dl-pct')) $('sp-dl-pct').textContent = `${p.percent}%`;
-        if ($('sp-dl-mb')) {
-          $('sp-dl-mb').classList.remove('hidden');
-          $('sp-dl-mb').textContent = `${p.mbDownloaded} / ${p.mbTotal} MB`;
-        }
-      } else {
-        if ($('sp-dl-text')) $('sp-dl-text').textContent = `Preparing ${modelLabel} model…`;
-        if ($('sp-dl-mb')) {
-          $('sp-dl-mb').textContent = '';
-          $('sp-dl-mb').classList.add('hidden');
-        }
-      }
-    });
-    if (modelKey === 'best') splitterState.bestCached = true;
-    else splitterState.fastCached = true;
-    renderModelStatusCard();
-  } catch (err) {
-    console.warn('Client-side model download warning:', err);
-    renderModelStatusCard();
-  }
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(`sceneflow_whisper_${modelKey}_cached`, 'true');
+    }
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [modelKey === 'best' ? 'whisperBestCached' : 'whisperFastCached']: true })
+    }).catch(() => {});
+  } catch {}
+
+  await checkModelStatus();
 }
 
 // ─── 3. Split Mode Selector & Custom Rules ────────────────────────────────────

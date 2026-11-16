@@ -107,6 +107,24 @@ function initApiKeyControls() {
   // Auto-collapse API section on load if key is already saved
   setApiSectionExpanded(!actualApiKey);
 
+  // Hydrate from server settings if not present in client, or sync to server if present
+  try {
+    fetch('/api/settings').then(r => r.json()).then(s => {
+      if (s && s.fishAudioApiKey && !actualApiKey) {
+        actualApiKey = s.fishAudioApiKey;
+        saveFishApiKey(s.fishAudioApiKey);
+        renderKeyInput();
+        setApiSectionExpanded(false, 'API Key restored');
+      } else if (s && !s.fishAudioApiKey && actualApiKey) {
+        fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fishAudioApiKey: actualApiKey })
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+  } catch {}
+
   if (apiToggle && apiBody) {
     apiToggle.onclick = () => {
       const willExpand = apiBody.classList.contains('hidden');
@@ -137,7 +155,7 @@ function initApiKeyControls() {
       saveFishApiKey(actualApiKey);
       isKeyMasked = true;
       renderKeyInput();
-      showFeedback(feedbackEl, '✓ Key saved in cookie (SameSite=Strict)', 'success');
+      showFeedback(feedbackEl, '✓ Key saved securely', 'success');
       // Hide API section cleanly once saved
       setApiSectionExpanded(false, '✓ Key saved in cookie');
     };

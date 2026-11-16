@@ -23,11 +23,59 @@ export const MAX_SKILLS = 5;
 const COOKIE_KEY_NAME = 'groq_api_key';
 const COOKIE_MODEL_NAME = 'groq_model';
 const LEGACY_COOKIE_KEY_NAME = 'gemini_api_key';
+const LS_KEY_NAME = 'sceneflow_groq_api_key';
+const LS_MODEL_NAME = 'sceneflow_groq_model';
+const LS_SKILLS_BACKUP = 'sceneflow_skills_backup';
 const DB_NAME = 'PromptHunterSkillsDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'skills';
 
-// ── 2. Cookie Helpers (SameSite=Strict, Secure on https, 1-Year Expiry) ───────
+// ── 2. Storage Helpers (LocalStorage + Cookies + Server File Sync) ───────────
+
+export function safeGetLS(key) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(key) || '';
+    }
+  } catch {}
+  return '';
+}
+
+export function safeSetLS(key, val) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      if (val === null || val === undefined || val === '') {
+        localStorage.removeItem(key);
+      } else {
+        localStorage.setItem(key, val);
+      }
+    }
+  } catch {}
+}
+
+export function syncSettingsToServer(patch) {
+  try {
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      }).catch(() => {});
+    }
+  } catch {}
+}
+
+export function syncSkillsToServer(skills) {
+  try {
+    if (typeof fetch !== 'undefined' && Array.isArray(skills)) {
+      fetch('/api/skills', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skills })
+      }).catch(() => {});
+    }
+  } catch {}
+}
 
 export function getCookie(name) {
   if (typeof document === 'undefined') return '';
@@ -58,6 +106,8 @@ export function deleteCookie(name) {
 }
 
 export function getStoredApiKey() {
+  const lsKey = safeGetLS(LS_KEY_NAME) || safeGetLS(COOKIE_KEY_NAME) || safeGetLS(LEGACY_COOKIE_KEY_NAME);
+  if (lsKey) return lsKey;
   const groqKey = getCookie(COOKIE_KEY_NAME);
   if (groqKey) return groqKey;
   return getCookie(LEGACY_COOKIE_KEY_NAME);
@@ -66,16 +116,26 @@ export function getStoredApiKey() {
 export function saveApiKeyCookie(key) {
   const clean = (key || '').trim();
   if (!clean) {
+    safeSetLS(LS_KEY_NAME, '');
+    safeSetLS(COOKIE_KEY_NAME, '');
+    safeSetLS(LEGACY_COOKIE_KEY_NAME, '');
     deleteCookie(COOKIE_KEY_NAME);
     deleteCookie(LEGACY_COOKIE_KEY_NAME);
+    syncSettingsToServer({ groqApiKey: '' });
     return;
   }
+  safeSetLS(LS_KEY_NAME, clean);
   setCookie(COOKIE_KEY_NAME, clean, 365);
+  syncSettingsToServer({ groqApiKey: clean });
 }
 
 export function removeApiKeyCookie() {
+  safeSetLS(LS_KEY_NAME, '');
+  safeSetLS(COOKIE_KEY_NAME, '');
+  safeSetLS(LEGACY_COOKIE_KEY_NAME, '');
   deleteCookie(COOKIE_KEY_NAME);
   deleteCookie(LEGACY_COOKIE_KEY_NAME);
+  syncSettingsToServer({ groqApiKey: '' });
 }
 
 export function maskApiKey(key) {
@@ -92,6 +152,10 @@ export function maskApiKey(key) {
 }
 
 export function getStoredModel() {
+  const lsModel = safeGetLS(LS_MODEL_NAME) || safeGetLS(COOKIE_MODEL_NAME);
+  if (lsModel && GROQ_MODELS.some(m => m.id === lsModel)) {
+    return lsModel;
+  }
   const stored = getCookie(COOKIE_MODEL_NAME);
   if (stored && GROQ_MODELS.some(m => m.id === stored)) {
     return stored;
@@ -101,7 +165,9 @@ export function getStoredModel() {
 }
 
 export function saveModelCookie(modelId) {
+  safeSetLS(LS_MODEL_NAME, modelId);
   setCookie(COOKIE_MODEL_NAME, modelId, 365);
+  syncSettingsToServer({ groqModel: modelId });
 }
 
 // ── 3. Image Thumbnail Resizing (~256px) ────────────────────────────────────
@@ -193,11 +259,13 @@ export async function requestPersistentStorage() {
 
 /**
  * Retrieve all skills from IndexedDB, sorted by updatedAt desc.
+ * If IndexedDB is empty (e.g. cleared browser or first run on new origin),
+ * automatically attempts restore from localStorage or server /api/skills backup.
  * @returns {Promise<Array>}
  */
 export async function getAllSkills() {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  const dbList = await new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
     const store = tx.objectStore(STORE_NAME);
     const req = store.getAll();
@@ -209,6 +277,47 @@ export async function getAllSkills() {
     };
     req.onerror = () => reject(req.error);
   });
+
+  if (dbList && dbList.length > 0) {
+    safeSetLS(LS_SKILLS_BACKUP, JSON.stringify(dbList));
+    syncSkillsToServer(dbList);
+    return dbList;
+  }
+
+  // Fallback 1: check localStorage backup
+  let backupList = [];
+  const rawLs = safeGetLS(LS_SKILLS_BACKUP);
+  if (rawLs) {
+    try {
+      const parsed = JSON.parse(rawLs);
+      if (Array.isArray(parsed) && parsed.length > 0) backupList = parsed;
+    } catch {}
+  }
+
+  // Fallback 2: check server /api/skills
+  if (!backupList.length && typeof fetch !== 'undefined') {
+    try {
+      const res = await fetch('/api/skills').then(r => r.json()).catch(() => null);
+      if (res && res.ok && Array.isArray(res.skills) && res.skills.length > 0) {
+        backupList = res.skills;
+      }
+    } catch {}
+  }
+
+  // Auto-restore backup list into IndexedDB so it's transparently recovered
+  if (backupList.length > 0) {
+    try {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      for (const item of backupList.slice(0, MAX_SKILLS)) {
+        store.put(item);
+      }
+      safeSetLS(LS_SKILLS_BACKUP, JSON.stringify(backupList));
+      return backupList;
+    } catch {}
+  }
+
+  return [];
 }
 
 /**
@@ -229,6 +338,7 @@ export async function getSkillById(id) {
 
 /**
  * Save or update a skill. Enforces maximum 5 skills limit for new creations.
+ * Automatically mirrors to localStorage and server file backup.
  * @param {object} skill
  * @returns {Promise<object>}
  */
@@ -258,13 +368,27 @@ export async function saveSkill(skill) {
   delete cleanSkill.apiKey;
   delete cleanSkill.key;
 
-  return new Promise((resolve, reject) => {
+  const saved = await new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
     const req = store.put(cleanSkill);
     req.onsuccess = () => resolve(cleanSkill);
     req.onerror = () => reject(req.error);
   });
+
+  try {
+    const updated = await new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([saved]);
+    });
+    safeSetLS(LS_SKILLS_BACKUP, JSON.stringify(updated));
+    syncSkillsToServer(updated);
+  } catch {}
+
+  return saved;
 }
 
 /**
@@ -299,13 +423,27 @@ export async function duplicateSkill(id) {
  */
 export async function deleteSkill(id) {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  const ok = await new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
     const req = store.delete(id);
     req.onsuccess = () => resolve(true);
     req.onerror = () => reject(req.error);
   });
+
+  try {
+    const remaining = await new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+    safeSetLS(LS_SKILLS_BACKUP, JSON.stringify(remaining));
+    syncSkillsToServer(remaining);
+  } catch {}
+
+  return ok;
 }
 
 // ── 5. Skill Import & Export (JSON with Base64 Thumbnails) ───────────────────

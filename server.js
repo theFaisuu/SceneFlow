@@ -285,6 +285,38 @@ app.post('/api/settings', (req, res) => {
   }
 });
 
+// ── Skills Persistent Storage ─────────────────────────────────────────────
+const SKILLS_FILE = isVercel
+  ? path.join(os.tmpdir(), 'sceneflow_skills.json')
+  : path.join(__dirname, 'data', 'skills.json');
+
+app.get('/api/skills', (req, res) => {
+  try {
+    if (fs.existsSync(SKILLS_FILE)) {
+      const raw = fs.readFileSync(SKILLS_FILE, 'utf8');
+      return res.json({ ok: true, skills: JSON.parse(raw) });
+    }
+  } catch (e) {
+    console.warn('Could not load skills from file:', e.message);
+  }
+  res.json({ ok: true, skills: [] });
+});
+
+app.post('/api/skills', (req, res) => {
+  try {
+    const { skills } = req.body;
+    if (Array.isArray(skills)) {
+      const dir = path.dirname(SKILLS_FILE);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(SKILLS_FILE, JSON.stringify(skills.slice(0, 5), null, 2), 'utf8');
+      return res.json({ ok: true, count: skills.length });
+    }
+    res.status(400).json({ error: 'Skills must be an array' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── History ───────────────────────────────────────────────────────────────
 app.get('/api/history', (req, res) => {
   res.json(historyStore.load());

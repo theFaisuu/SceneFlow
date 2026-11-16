@@ -38,6 +38,14 @@ const DEFAULTS = {
   voiceoverMode: 'cut',
   saveFolder: isVercel ? '' : (process.platform === 'win32' ? 'C:\\' : ''),
   lastFolder: '',
+  groqApiKey: '',
+  groqModel: 'llama-3.3-70b-versatile',
+  fishAudioApiKey: '',
+  fishAudioModel: 's2.1-pro-free',
+  fishAudioVoiceId: 'bf322df2096a46f18c579d0baa36f41d',
+  customVoices: [],
+  whisperFastCached: false,
+  whisperBestCached: false,
 };
 
 function ensureDir() {

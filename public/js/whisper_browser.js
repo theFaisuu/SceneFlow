@@ -43,7 +43,26 @@ export async function checkDeviceSupport() {
   };
 }
 
+export async function requestPersistentStorage() {
+  if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+    try {
+      const isPersisted = await navigator.storage.persisted();
+      if (!isPersisted) {
+        return await navigator.storage.persist();
+      }
+      return true;
+    } catch {}
+  }
+  return false;
+}
+
 export async function checkClientModelCached(modelKey) {
+  if (typeof localStorage !== 'undefined') {
+    if (localStorage.getItem(`sceneflow_whisper_${modelKey}_cached`) === 'true') {
+      return true;
+    }
+  }
+
   const modelId = modelKey === 'best' ? 'onnx-community/whisper-small' : 'onnx-community/whisper-base';
   if (typeof window === 'undefined' || !('caches' in window)) return false;
   try {
@@ -53,6 +72,9 @@ export async function checkClientModelCached(modelKey) {
         const cache = await caches.open(name);
         const requests = await cache.keys();
         if (requests.some(req => req.url.includes(modelId) || req.url.includes(encodeURIComponent(modelId)))) {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(`sceneflow_whisper_${modelKey}_cached`, 'true');
+          }
           return true;
         }
       }
@@ -185,6 +207,20 @@ export async function loadWhisperModel(modelKey = 'fast', onProgress = null) {
 
   activePipeline = transcriber;
   activeModelKey = modelKey;
+
+  if (typeof localStorage !== 'undefined') {
+    try { localStorage.setItem(`sceneflow_whisper_${modelKey}_cached`, 'true'); } catch {}
+  }
+  try {
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [modelKey === 'best' ? 'whisperBestCached' : 'whisperFastCached']: true })
+      }).catch(() => {});
+    }
+  } catch {}
+
   return transcriber;
 }
 
