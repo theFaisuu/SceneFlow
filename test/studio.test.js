@@ -207,6 +207,7 @@ test('Studio Section 03 HTML & captions.js support full line default, No Caption
   assert.match(sec3, /<textarea[^>]*id="caption-text"[^>]*class="[^"]*flex-1/, 'Caption textarea should use flex-1 to stretch to bottom footer');
 
   assert.match(sec3, /<select[^>]*id="s-caption-segment"/, 'Segment per line dropdown should be present in Section 03 header');
+  assert.ok(sec3.indexOf('id="s-caption-segment"') < sec3.indexOf('id="s-caption-font"'), 'Segment selector should appear before Font selector in Section 03 header');
   assert.match(sec3, /<option[^>]*value="all"[^>]*selected>Full Sentence<\/option>/, 'Segment selector should have Full Sentence selected by default');
   assert.match(sec3, /<option[^>]*value="smart">Smart \(4-6 Words\)<\/option>/, 'Segment selector should include Smart (4-6 Words) option');
   assert.match(sec3, /<option[^>]*value="3">3 Words<\/option>/, 'Segment selector should include 3 Words option');
