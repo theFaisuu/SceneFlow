@@ -15,7 +15,9 @@ import {
   cleanPromptText,
   formatStyleGuideAsLines,
   formatStyleGuideAsParagraph,
-  buildPromptsOutput
+  buildPromptsOutput,
+  filterLinesFromTimestamp,
+  mergePreservedAndGeneratedItems
 } from './prompts_parser.js';
 
 import {
@@ -72,6 +74,8 @@ const state = {
   abortController: null,
   failedBatches: [],
   activeBatchesData: null,
+  startTime: '(0:00)',
+  resumeTime: null,
   // Modal state
   modalEditingSkillId: null,
   modalUploadedImages: [] // Array of base64 strings
@@ -928,11 +932,17 @@ function initInputCaptionsUI() {
       state.rawOutputText = '';
       state.failedBatches = [];
       state.activeBatchesData = null;
+      state.startTime = '(0:00)';
+      state.resumeTime = null;
       state.selectedSkillId = 'none';
       state.language = 'English';
       state.blankLines = true;
 
       if (inputEl) inputEl.value = '';
+      if ($('pr-start-time')) $('pr-start-time').value = '(0:00)';
+      if ($('pr-start-time-hint')) $('pr-start-time-hint').textContent = 'Generating all prompts from start.';
+      if ($('pr-btn-generate-label')) $('pr-btn-generate-label').textContent = 'Generate Image Prompts';
+      if ($('pr-btn-resume')) $('pr-btn-resume').classList.add('hidden');
       if ($('pr-skill-select')) $('pr-skill-select').value = 'none';
       if ($('pr-setting-language')) $('pr-setting-language').value = 'English';
       if ($('pr-toggle-blank-lines')) $('pr-toggle-blank-lines').checked = true;
@@ -948,7 +958,41 @@ function initInputCaptionsUI() {
   }
 }
 
-// ── 5. Generation Controller (Batches of ~20 Lines with Verification) ───────
+// ── 5. Generation Controller (Batches of ~10 Lines with Resume & Regeneration) ──────
+
+function updateStartTimeUI() {
+  const input = $('pr-start-time');
+  const label = $('pr-btn-generate-label');
+  const hint = $('pr-start-time-hint');
+  const rawVal = (input ? input.value : state.startTime || '').trim();
+  const sec = parseTimeString(rawVal);
+
+  if (sec !== null && sec > 0) {
+    const formatted = rawVal.startsWith('(') && rawVal.endsWith(')')
+      ? rawVal
+      : `(${rawVal.replace(/^[\(\[]/, '').replace(/[\)\]]$/, '')})`;
+    state.startTime = formatted;
+    if (label) label.textContent = `Generate Prompts from ${formatted}`;
+    if (hint) hint.textContent = `Prompts before ${formatted} will stay protected and untouched.`;
+  } else {
+    state.startTime = '(0:00)';
+    if (label) label.textContent = 'Generate Image Prompts';
+    if (hint) hint.textContent = 'Generating all prompts from start.';
+  }
+}
+
+function updateResumeBtnUI() {
+  const resumeBtn = $('pr-btn-resume');
+  const resumeLabel = $('pr-btn-resume-label');
+  if (!resumeBtn) return;
+
+  if (state.resumeTime) {
+    resumeBtn.classList.remove('hidden');
+    if (resumeLabel) resumeLabel.textContent = `Resume from ${state.resumeTime}`;
+  } else {
+    resumeBtn.classList.add('hidden');
+  }
+}
 
 function initGenerationUI() {
   const genBtn = $('pr-btn-generate');
@@ -957,6 +1001,32 @@ function initGenerationUI() {
   const progressBar = $('pr-progress-bar');
   const progressText = $('pr-progress-text');
   const retryBtn = $('pr-btn-retry-failed');
+  const resumeBtn = $('pr-btn-resume');
+  const startTimeInput = $('pr-start-time');
+  const resetStartTimeBtn = $('pr-btn-reset-start-time');
+
+  // Start Time input listeners
+  if (startTimeInput) {
+    startTimeInput.oninput = () => updateStartTimeUI();
+    startTimeInput.onchange = () => updateStartTimeUI();
+  }
+  if (resetStartTimeBtn) {
+    resetStartTimeBtn.onclick = () => {
+      if (startTimeInput) startTimeInput.value = '(0:00)';
+      updateStartTimeUI();
+    };
+  }
+
+  // 1-Click Resume button
+  if (resumeBtn) {
+    resumeBtn.onclick = () => {
+      if (state.resumeTime) {
+        if (startTimeInput) startTimeInput.value = state.resumeTime;
+        updateStartTimeUI();
+        startBatchedGeneration(state.resumeTime);
+      }
+    };
+  }
 
   // Settings elements
   const lenSelect = $('pr-setting-length');
@@ -983,9 +1053,24 @@ function initGenerationUI() {
         state.abortController.abort();
       }
       state.isGenerating = false;
-      showToast('Generation cancelled.', 'warn');
+      showToast('Generation paused/cancelled.', 'warn');
       if (progressWrap) progressWrap.classList.add('hidden');
       if (genBtn) genBtn.disabled = false;
+
+      // Detect next pending timestamp so user can resume anytime
+      if (state.activeBatchesData) {
+        const { linesToGenerate } = state.activeBatchesData;
+        const currentDoneCount = (state.outputItems || []).filter(it => {
+          const itSec = (it.timeSec !== undefined) ? it.timeSec : parseTimeString(it.rawTime);
+          const startSec = parseTimeString(state.startTime) || 0;
+          return itSec !== null && itSec >= startSec;
+        }).length;
+
+        if (linesToGenerate && currentDoneCount < linesToGenerate.length) {
+          state.resumeTime = linesToGenerate[currentDoneCount].rawTime;
+          updateResumeBtnUI();
+        }
+      }
     };
   }
 
@@ -999,7 +1084,7 @@ function initGenerationUI() {
   }
 }
 
-async function startBatchedGeneration() {
+async function startBatchedGeneration(customStartTime) {
   if (!state.apiKey) {
     showToast('Please enter and test your Groq API key in Section 1.', 'warn');
     return;
@@ -1011,6 +1096,23 @@ async function startBatchedGeneration() {
     return;
   }
 
+  const timeStr = customStartTime || $('pr-start-time')?.value || state.startTime || '(0:00)';
+  const startSec = parseTimeString(timeStr) || 0;
+
+  // Split lines: lines before startSec are preserved, lines at or after startSec are generated
+  const { preserved: preservedLines, toGenerate: linesToGenerate } = filterLinesFromTimestamp(inputLines, startSec);
+
+  if (!linesToGenerate.length) {
+    showToast(`No caption lines found at or after ${timeStr}.`, 'warn');
+    return;
+  }
+
+  // Preserve existing prompts from state.outputItems before startSec (protect previously generated items!)
+  const preservedItems = (state.outputItems || []).filter(it => {
+    const itSec = (it.timeSec !== undefined) ? it.timeSec : parseTimeString(it.rawTime);
+    return itSec !== null && itSec < startSec;
+  });
+
   state.isGenerating = true;
   state.abortController = new AbortController();
   state.failedBatches = [];
@@ -1020,10 +1122,12 @@ async function startBatchedGeneration() {
   const progressBar = $('pr-progress-bar');
   const progressText = $('pr-progress-text');
   const retryBtn = $('pr-btn-retry-failed');
+  const resumeBtn = $('pr-btn-resume');
 
   if (genBtn) genBtn.disabled = true;
   if (progressWrap) progressWrap.classList.remove('hidden');
   if (retryBtn) retryBtn.classList.add('hidden');
+  if (resumeBtn) resumeBtn.classList.add('hidden');
 
   // Find active skill data
   let styleGuide = '';
@@ -1036,9 +1140,12 @@ async function startBatchedGeneration() {
     }
   }
 
-  // Create batches of 10 with 3 lines context (e.g. 100 prompts in 10 requests)
-  const batches = createBatches(inputLines, 10, 3);
-  state.activeBatchesData = { batches, resultsByBatch: new Map() };
+  // Create batches of 10 lines for linesToGenerate ONLY.
+  // Note: Per user instruction, no narrative continuity context from before startSec is passed.
+  const batches = createBatches(linesToGenerate, 10, 3);
+  state.activeBatchesData = { batches, resultsByBatch: new Map(), linesToGenerate, preservedItems, styleGuide, stylePrefix };
+
+  let generatedModelResults = [];
 
   for (let b = 0; b < batches.length; b++) {
     if (!state.isGenerating) break;
@@ -1066,10 +1173,31 @@ async function startBatchedGeneration() {
           }
         });
 
-        // Verify count matches batch
         if (batchResults && batchResults.length > 0) {
           state.activeBatchesData.resultsByBatch.set(b, batchResults);
           batchSuccess = true;
+
+          // Progressive rendering: immediately build and show prompts up to this batch
+          const currentNewResults = [];
+          for (let cb = 0; cb <= b; cb++) {
+            const cr = state.activeBatchesData.resultsByBatch.get(cb);
+            if (cr) currentNewResults.push(...cr);
+          }
+          generatedModelResults = currentNewResults;
+
+          const progressiveLines = linesToGenerate.slice(0, currentNewResults.length);
+          const builtProgressive = buildPromptsOutput(progressiveLines, currentNewResults, {
+            blankLineBetweenPrompts: state.blankLines,
+            styleGuide,
+            stylePrefix,
+            aspectRatio: state.aspectRatio
+          });
+
+          state.outputItems = mergePreservedAndGeneratedItems(preservedItems, builtProgressive.items);
+          state.styleGuideHeader = builtProgressive.styleGuideHeader;
+          const delimiter = state.blankLines ? '\n\n' : '\n';
+          state.rawOutputText = state.outputItems.map(it => it.fullPromptLine).join(delimiter);
+          renderOutputUI();
         } else {
           throw new Error('Batch returned 0 prompts');
         }
@@ -1080,114 +1208,44 @@ async function startBatchedGeneration() {
         }
       }
     }
+
+    // Stop if batch failed after retries so user can resume cleanly
+    if (!batchSuccess) {
+      break;
+    }
   }
 
   // Finalize Generation
   if (progressBar) progressBar.style.width = '100%';
-  if (progressText) progressText.textContent = 'Assembling and verifying prompts output...';
-
-  // Merge all batch results
-  const allModelResults = [];
-  for (let b = 0; b < batches.length; b++) {
-    const res = state.activeBatchesData.resultsByBatch.get(b) || [];
-    allModelResults.push(...res);
-  }
-
-  // Build Prompts with guaranteed original timestamps
-  const built = buildPromptsOutput(inputLines, allModelResults, {
-    blankLineBetweenPrompts: state.blankLines,
-    styleGuide,
-    stylePrefix,
-    aspectRatio: state.aspectRatio
-  });
-
-  state.outputItems = built.items;
-  state.styleGuideHeader = built.styleGuideHeader;
-  state.rawOutputText = built.rawOutputText;
-
-  renderOutputUI();
+  if (progressText) progressText.textContent = 'Finalizing prompts output...';
 
   state.isGenerating = false;
   if (genBtn) genBtn.disabled = false;
   if (progressWrap) progressWrap.classList.add('hidden');
 
-  if (state.failedBatches.length > 0) {
-    if (retryBtn) retryBtn.classList.remove('hidden');
-    showToast(`Completed with ${state.failedBatches.length} batch error(s). Click Retry Failed Batches to finish.`, 'warn');
-  } else {
-    showToast(`✓ Successfully generated ${built.items.length} prompts 1:1 synced to timestamps!`, 'success');
+  // Check if incomplete or failed midway
+  if (generatedModelResults.length < linesToGenerate.length) {
+    const nextLine = linesToGenerate[generatedModelResults.length];
+    if (nextLine) {
+      state.resumeTime = nextLine.rawTime;
+      updateResumeBtnUI();
+      showToast(`Generation stopped at ${nextLine.rawTime}. Click "Resume from ${nextLine.rawTime}" to continue without touching earlier prompts.`, 'warn');
+      return;
+    }
   }
+
+  // All lines completed successfully!
+  state.resumeTime = null;
+  updateResumeBtnUI();
+  showToast(`✓ Successfully generated prompts! Total: ${state.outputItems.length} prompts 1:1 synced to timestamps.`, 'success');
 }
 
 async function retryFailedBatches() {
-  if (!state.failedBatches.length || !state.activeBatchesData) return;
-  const batchesToRetry = [...state.failedBatches];
-  state.failedBatches = [];
-
-  const progressWrap = $('pr-progress-wrap');
-  const progressBar = $('pr-progress-bar');
-  const progressText = $('pr-progress-text');
-  const retryBtn = $('pr-btn-retry-failed');
-
-  if (progressWrap) progressWrap.classList.remove('hidden');
-  if (retryBtn) retryBtn.classList.add('hidden');
-
-  let styleGuide = '';
-  let stylePrefix = '';
-  if (state.selectedSkillId && state.selectedSkillId !== 'none') {
-    const activeSkill = state.skills.find(s => s.id === state.selectedSkillId);
-    if (activeSkill) {
-      styleGuide = activeSkill.styleGuide || '';
-      stylePrefix = activeSkill.stylePrefix || '';
-    }
+  if (state.resumeTime) {
+    await startBatchedGeneration(state.resumeTime);
+    return;
   }
-
-  for (const b of batchesToRetry) {
-    const batch = state.activeBatchesData.batches[b];
-    if (progressText) progressText.textContent = `Retrying batch ${b + 1}...`;
-    try {
-      const batchResults = await generatePromptsBatch(state.apiKey, state.model, {
-        batchItems: batch.items,
-        prevContext: batch.prevContext,
-        nextContext: batch.nextContext,
-        directives: state.notes,
-        settings: {
-          promptLength: state.promptLength,
-          language: state.language
-        }
-      });
-      state.activeBatchesData.resultsByBatch.set(b, batchResults);
-    } catch (err) {
-      state.failedBatches.push(b);
-    }
-  }
-
-  // Rebuild
-  const allModelResults = [];
-  for (let b = 0; b < state.activeBatchesData.batches.length; b++) {
-    const res = state.activeBatchesData.resultsByBatch.get(b) || [];
-    allModelResults.push(...res);
-  }
-
-  const built = buildPromptsOutput(state.validation.lines, allModelResults, {
-    blankLineBetweenPrompts: state.blankLines,
-    styleGuide,
-    stylePrefix,
-    aspectRatio: state.aspectRatio
-  });
-
-  state.outputItems = built.items;
-  state.styleGuideHeader = built.styleGuideHeader;
-  state.rawOutputText = built.rawOutputText;
-  renderOutputUI();
-
-  if (progressWrap) progressWrap.classList.add('hidden');
-  if (state.failedBatches.length > 0) {
-    if (retryBtn) retryBtn.classList.remove('hidden');
-    showToast(`Still ${state.failedBatches.length} batch(es) failed. Check your API key/network.`, 'error');
-  } else {
-    showToast('All batches successfully recovered!', 'success');
-  }
+  await startBatchedGeneration();
 }
 
 // ── 6. Output Prompts Rendering & Actions ───────────────────────────────────

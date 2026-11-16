@@ -14,7 +14,9 @@ const {
   createBatches,
   cleanPromptText,
   formatStyleGuideAsLines,
-  buildPromptsOutput
+  buildPromptsOutput,
+  filterLinesFromTimestamp,
+  mergePreservedAndGeneratedItems
 } = require('../src/prompts_parser.js');
 
 // ── 1. Timestamp Formats ──────────────────────────────────────────────────
@@ -532,4 +534,86 @@ test('testGroqApiKey and generatePromptsBatch auto-fallback via /models when def
   } finally {
     globalThis.fetch = origFetch;
   }
+});
+
+// ── 9. Resume & Timestamp-Selective Regeneration ──────────────────────────
+
+test('filterLinesFromTimestamp splits caption lines at start time without touching previous', () => {
+  const sampleInput = `(0:00) First scene intro
+(0:05) Walking along the beach
+(0:12) Looking at the distant hills
+(0:20) Sun setting over water
+(0:23) Darkness falls upon the valley
+(0:30) Stars begin to sparkle
+(0:45) Campfire crackling softly`;
+
+  const { lines } = validateCaptionLines(sampleInput);
+  assert.equal(lines.length, 7);
+
+  // 1. From beginning (0:00) -> all lines toGenerate, 0 preserved
+  const r0 = filterLinesFromTimestamp(lines, '(0:00)');
+  assert.equal(r0.preserved.length, 0);
+  assert.equal(r0.toGenerate.length, 7);
+  assert.equal(r0.startSec, 0);
+
+  // 2. Start from (0:23) -> preserves 4 lines (< 23s), generates 3 lines (>= 23s)
+  const r23 = filterLinesFromTimestamp(lines, '(0:23)');
+  assert.equal(r23.preserved.length, 4);
+  assert.equal(r23.toGenerate.length, 3);
+  assert.equal(r23.startSec, 23);
+  assert.equal(r23.preserved[r23.preserved.length - 1].rawTime, '(0:20)');
+  assert.equal(r23.toGenerate[0].rawTime, '(0:23)');
+  assert.equal(r23.toGenerate[1].rawTime, '(0:30)');
+  assert.equal(r23.toGenerate[2].rawTime, '(0:45)');
+
+  // 3. Start without parentheses "0:23"
+  const r23b = filterLinesFromTimestamp(lines, '0:23');
+  assert.equal(r23b.toGenerate.length, 3);
+  assert.equal(r23b.startSec, 23);
+
+  // 4. Start beyond end
+  const rBeyond = filterLinesFromTimestamp(lines, '(5:00)');
+  assert.equal(rBeyond.preserved.length, 7);
+  assert.equal(rBeyond.toGenerate.length, 0);
+});
+
+test('mergePreservedAndGeneratedItems keeps previous prompts intact and appends newly generated', () => {
+  const preservedItems = [
+    { index: 0, rawTime: '(0:00)', cleanTime: '0:00', timeSec: 0, promptText: 'CUSTOM USER EDITED PROMPT AT 0:00', fullPromptLine: '(0:00) CUSTOM USER EDITED PROMPT AT 0:00' },
+    { index: 1, rawTime: '(0:20)', cleanTime: '0:20', timeSec: 20, promptText: 'PRESERVED SCENE PROMPT AT 0:20', fullPromptLine: '(0:20) PRESERVED SCENE PROMPT AT 0:20' }
+  ];
+
+  const newlyGeneratedItems = [
+    { index: 0, rawTime: '(0:23)', cleanTime: '0:23', timeSec: 23, promptText: 'NEW PROMPT AT 0:23', fullPromptLine: '(0:23) NEW PROMPT AT 0:23' },
+    { index: 1, rawTime: '(0:30)', cleanTime: '0:30', timeSec: 30, promptText: 'NEW PROMPT AT 0:30', fullPromptLine: '(0:30) NEW PROMPT AT 0:30' }
+  ];
+
+  const merged = mergePreservedAndGeneratedItems(preservedItems, newlyGeneratedItems);
+  assert.equal(merged.length, 4);
+
+  // Verify previous prompts were NOT overwritten and kept custom edits
+  assert.equal(merged[0].promptText, 'CUSTOM USER EDITED PROMPT AT 0:00');
+  assert.equal(merged[0].index, 0);
+  assert.equal(merged[1].promptText, 'PRESERVED SCENE PROMPT AT 0:20');
+  assert.equal(merged[1].index, 1);
+
+  // Verify new prompts are in place and correctly re-indexed
+  assert.equal(merged[2].rawTime, '(0:23)');
+  assert.equal(merged[2].promptText, 'NEW PROMPT AT 0:23');
+  assert.equal(merged[2].index, 2);
+  assert.equal(merged[3].rawTime, '(0:30)');
+  assert.equal(merged[3].promptText, 'NEW PROMPT AT 0:30');
+  assert.equal(merged[3].index, 3);
+});
+
+test('index.html contains Start From Timestamp input and Resume button', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  assert.ok(html.includes('id="pr-start-time"'), 'Should contain #pr-start-time input field');
+  assert.ok(html.includes('id="pr-btn-reset-start-time"'), 'Should contain #pr-btn-reset-start-time button');
+  assert.ok(html.includes('id="pr-btn-resume"'), 'Should contain #pr-btn-resume button');
+  assert.ok(html.includes('id="pr-btn-generate-label"'), 'Should contain #pr-btn-generate-label');
+  assert.ok(html.includes('id="pr-start-time-hint"'), 'Should contain #pr-start-time-hint');
 });

@@ -428,6 +428,7 @@ export function buildPromptsOutput(inputLines, modelResults, options = {}) {
       index: idx,
       rawTime: line.rawTime,
       cleanTime: line.cleanTime,
+      timeSec: (line.timeSec !== undefined) ? line.timeSec : parseTimeString(line.rawTime),
       captionText: line.text,
       scenePrompt: cleanScene,
       promptText: finalPrompt,
@@ -448,4 +449,56 @@ export function buildPromptsOutput(inputLines, modelResults, options = {}) {
     styleGuideHeader: formattedParagraph,
     rawOutputText
   };
+}
+
+/**
+ * Filter caption lines into preserved lines (before startTime) and lines to generate (at or after startTime).
+ * @param {Array} lines - Array of parsed timestamp lines
+ * @param {string|number} startTime - Start time string (e.g. "(0:23)", "0:23") or seconds
+ * @returns {object} { preserved: Array, toGenerate: Array, startSec: number }
+ */
+export function filterLinesFromTimestamp(lines, startTime) {
+  if (!lines || !Array.isArray(lines)) {
+    return { preserved: [], toGenerate: [], startSec: 0 };
+  }
+  const startSec = typeof startTime === 'number'
+    ? Math.max(0, startTime)
+    : (parseTimeString(startTime) || 0);
+
+  if (startSec <= 0) {
+    return { preserved: [], toGenerate: [...lines], startSec: 0 };
+  }
+
+  const preserved = lines.filter(l => {
+    const sec = (l.timeSec !== undefined) ? l.timeSec : parseTimeString(l.rawTime);
+    return sec !== null && sec < startSec;
+  });
+
+  const toGenerate = lines.filter(l => {
+    const sec = (l.timeSec !== undefined) ? l.timeSec : parseTimeString(l.rawTime);
+    return sec !== null && sec >= startSec;
+  });
+
+  return { preserved, toGenerate, startSec };
+}
+
+/**
+ * Merges preserved output items (before start timestamp) with newly generated output items.
+ * Guarantees chronological order and re-indexes the final items.
+ * @param {Array} preservedItems - Existing output items before start timestamp
+ * @param {Array} newItems - Newly generated output items from start timestamp onwards
+ * @returns {Array} Merged and indexed output items
+ */
+export function mergePreservedAndGeneratedItems(preservedItems, newItems) {
+  const preserved = Array.isArray(preservedItems) ? preservedItems : [];
+  const generated = Array.isArray(newItems) ? newItems : [];
+  const merged = [...preserved, ...generated];
+
+  merged.sort((a, b) => {
+    const aTime = (a.timeSec !== undefined) ? a.timeSec : (parseTimeString(a.rawTime) || 0);
+    const bTime = (b.timeSec !== undefined) ? b.timeSec : (parseTimeString(b.rawTime) || 0);
+    return aTime - bTime;
+  });
+
+  return merged.map((item, idx) => ({ ...item, index: idx }));
 }
