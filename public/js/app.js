@@ -9,6 +9,7 @@ import { initTimingUI } from './timing_ui.js';
 import { initVoiceoverUI } from './voice_ui.js';
 import { initPromptsUI } from './prompts_ui.js';
 import { initImagesUI } from './images_ui.js';
+import { initVideoUI } from './video_ui.js';
 import { getBlockFilename } from './timing_client.js';
 
 // ── State ────────────────────────────────────────────────────────────────
@@ -51,41 +52,139 @@ function getMediaSrc(fileItem) {
   return '';
 }
 
+function updatePreviewFrameDisplay(fileItem, currentTime = 0, isPlaying = false) {
+  const imgEl = $('preview-frame-img');
+  const vidEl = $('preview-frame-video');
+  const phEl = $('preview-placeholder');
+
+  if (!fileItem || fileItem.type === 'gap') {
+    if (imgEl) {
+      imgEl.classList.add('hidden');
+      imgEl.removeAttribute('src');
+    }
+    if (vidEl) {
+      try { vidEl.pause(); } catch {}
+      vidEl.classList.add('hidden');
+      vidEl.removeAttribute('src');
+      vidEl.dataset.currentSrc = '';
+    }
+    if (phEl) phEl.classList.remove('hidden');
+    return;
+  }
+
+  const src = getMediaSrc(fileItem);
+  if (!src) {
+    if (imgEl) {
+      imgEl.classList.add('hidden');
+      imgEl.removeAttribute('src');
+    }
+    if (vidEl) {
+      try { vidEl.pause(); } catch {}
+      vidEl.classList.add('hidden');
+      vidEl.removeAttribute('src');
+      vidEl.dataset.currentSrc = '';
+    }
+    if (phEl) phEl.classList.remove('hidden');
+    return;
+  }
+
+  const isVideo = fileItem.type === 'video' || (fileItem.name && /\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(fileItem.name));
+
+  if (isVideo) {
+    // Hide image element so no broken image icon is shown
+    if (imgEl) {
+      imgEl.classList.add('hidden');
+      imgEl.removeAttribute('src');
+    }
+    if (phEl) phEl.classList.add('hidden');
+
+    if (vidEl) {
+      vidEl.classList.remove('hidden');
+
+      const startSec = (fileItem.startSec !== undefined) ? fileItem.startSec : 0;
+      const localTime = Math.max(0, currentTime - startSec);
+
+      if (vidEl.dataset.currentSrc !== src) {
+        vidEl.dataset.currentSrc = src;
+        vidEl.src = src;
+        vidEl.load();
+      }
+
+      const syncVideo = () => {
+        try {
+          if (isPlaying) {
+            if (Math.abs(vidEl.currentTime - localTime) > 0.3) {
+              vidEl.currentTime = localTime;
+            }
+            if (vidEl.paused) {
+              const p = vidEl.play();
+              if (p && typeof p.catch === 'function') p.catch(() => {});
+            }
+          } else {
+            if (!vidEl.paused) {
+              vidEl.pause();
+            }
+            if (Math.abs(vidEl.currentTime - localTime) > 0.05) {
+              vidEl.currentTime = localTime;
+            }
+          }
+        } catch (e) {
+          console.warn('Video preview sync error:', e);
+        }
+      };
+
+      if (vidEl.readyState >= 1) {
+        syncVideo();
+      } else {
+        vidEl.onloadedmetadata = () => {
+          syncVideo();
+        };
+      }
+    }
+  } else {
+    // Image element
+    if (vidEl) {
+      try { vidEl.pause(); } catch {}
+      vidEl.classList.add('hidden');
+      vidEl.removeAttribute('src');
+      vidEl.dataset.currentSrc = '';
+    }
+    if (phEl) phEl.classList.add('hidden');
+    if (imgEl) {
+      if (imgEl.src !== src) {
+        imgEl.src = src;
+      }
+      imgEl.classList.remove('hidden');
+    }
+  }
+}
+
 function setPreviewFrame(clipOrFile) {
   if (!clipOrFile) {
-    const firstImg = state.files.find(f => f.type === 'image') || state.clips.find(c => c.type === 'image');
-    if (!firstImg) {
-      if ($('preview-placeholder')) $('preview-placeholder').classList.remove('hidden');
-      if ($('preview-frame-img')) $('preview-frame-img').classList.add('hidden');
+    const firstMedia = state.files.find(f => f.type !== 'gap') || state.clips.find(c => c.type !== 'gap');
+    if (!firstMedia) {
+      updatePreviewFrameDisplay(null, 0, false);
       if ($('preview-clip-tag')) $('preview-clip-tag').classList.add('hidden');
       state.previewCurrentTime = 0;
       updateCaptionPreview(0);
       updatePlayheadVisuals(0);
       return;
     }
-    clipOrFile = firstImg;
+    clipOrFile = firstMedia;
   }
 
   const fileItem = state.files.find(f => f.name === clipOrFile.name) || clipOrFile;
-  const src = getMediaSrc(fileItem);
-
   const clipTime = (clipOrFile.startSec !== undefined) ? clipOrFile.startSec : 0;
   state.previewCurrentTime = clipTime;
 
-  if (src && fileItem.type !== 'gap') {
-    const imgEl = $('preview-frame-img');
-    if (imgEl) {
-      imgEl.src = src;
-      imgEl.classList.remove('hidden');
-    }
-    if ($('preview-placeholder')) $('preview-placeholder').classList.add('hidden');
-    if ($('preview-clip-tag')) $('preview-clip-tag').classList.add('hidden');
+  updatePreviewFrameDisplay(fileItem, clipTime, isTimelinePlaying);
 
-    $$('#timeline-body tr').forEach(row => row.classList.remove('active-preview'));
-    if (clipOrFile.index) {
-      const activeRow = $(`timeline-row-${clipOrFile.index}`);
-      if (activeRow) activeRow.classList.add('active-preview');
-    }
+  if ($('preview-clip-tag')) $('preview-clip-tag').classList.add('hidden');
+
+  $$('#timeline-body tr').forEach(row => row.classList.remove('active-preview'));
+  if (clipOrFile.index) {
+    const activeRow = $(`timeline-row-${clipOrFile.index}`);
+    if (activeRow) activeRow.classList.add('active-preview');
   }
 
   updatePlayheadVisuals(clipTime);
@@ -500,15 +599,29 @@ function renderMediaGrid() {
       img.loading = 'lazy';
       wrap.appendChild(img);
     } else {
-      const vid = document.createElement('div');
-      vid.className = 'media-thumb';
-      vid.style.cssText = 'display:flex;align-items:center;justify-content:center;color:var(--text3);';
-      vid.innerHTML = icons.video;
-      vid.title = f.name;
+      const fallback = document.createElement('div');
+      fallback.className = 'media-thumb flex items-center justify-center text-slate-500 bg-[#0d131a] absolute inset-0';
+      fallback.innerHTML = icons.video;
+      fallback.title = f.name;
+      wrap.appendChild(fallback);
+
+      if (src) {
+        const vid = document.createElement('video');
+        vid.className = 'media-thumb object-cover w-full h-full pointer-events-none absolute inset-0';
+        vid.preload = 'metadata';
+        vid.muted = true;
+        vid.playsInline = true;
+        vid.src = `${src}#t=0.001`;
+        vid.title = f.name;
+        vid.onloadedmetadata = () => {
+          try { vid.currentTime = 0.001; } catch {}
+        };
+        wrap.appendChild(vid);
+      }
+
       const icon = document.createElement('span');
       icon.className = 'thumb-video-icon';
       icon.textContent = 'VIDEO';
-      wrap.appendChild(vid);
       wrap.appendChild(icon);
     }
 
@@ -1545,21 +1658,13 @@ function seekTimeline(timeSec, syncAudio = true) {
 
   updatePlayheadVisuals(clampedTime);
 
-  // Sync preview frame image
+  // Sync preview frame image or video
   if (state.clips && state.clips.length > 0) {
     const activeClip = state.clips.find(c => clampedTime >= c.startSec && clampedTime < c.endSec) 
                     || (clampedTime >= total ? state.clips[state.clips.length - 1] : state.clips[0]);
     if (activeClip) {
       const fileItem = state.files.find(f => f.name === activeClip.name) || activeClip;
-      const src = getMediaSrc(fileItem);
-      if (src && fileItem.type !== 'gap') {
-        const imgEl = $('preview-frame-img');
-        if (imgEl) {
-          imgEl.src = src;
-          imgEl.classList.remove('hidden');
-        }
-        if ($('preview-placeholder')) $('preview-placeholder').classList.add('hidden');
-      }
+      updatePreviewFrameDisplay(fileItem, clampedTime, isTimelinePlaying);
 
       $$('#timeline-body tr').forEach(row => row.classList.remove('active-preview'));
       if (activeClip.index) {
@@ -1634,6 +1739,10 @@ function pauseTimeline() {
   }
   if (timelineAudio) {
     timelineAudio.pause();
+  }
+  const vidEl = $('preview-frame-video');
+  if (vidEl && !vidEl.paused) {
+    try { vidEl.pause(); } catch {}
   }
   updatePlayButtonUI(false);
 }
@@ -2310,6 +2419,7 @@ async function init() {
   initTimingUI();
   initPromptsUI();
   initImagesUI();
+  initVideoUI();
 
   // Initialize Studio waveform & scrubbing
   const waveformEl = $('timeline-canvas') || $('waveform-canvas');

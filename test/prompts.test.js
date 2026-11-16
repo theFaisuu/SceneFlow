@@ -617,3 +617,58 @@ test('index.html contains Start From Timestamp input and Resume button', () => {
   assert.ok(html.includes('id="pr-btn-generate-label"'), 'Should contain #pr-btn-generate-label');
   assert.ok(html.includes('id="pr-start-time-hint"'), 'Should contain #pr-start-time-hint');
 });
+
+test('parsePromptRange correctly parses custom ranges (1-10 for video, 11-end for images, all)', async () => {
+  const path = require('node:path');
+  const { pathToFileURL } = require('node:url');
+  const { parsePromptRange } = await import(pathToFileURL(path.join(__dirname, '..', 'public', 'js', 'prompts_ui.js')).href);
+
+  // 1-10 for video
+  const rangeVideo = parsePromptRange('1-10', 20);
+  assert.deepEqual(rangeVideo, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+  // 11-end for images
+  const rangeImages = parsePromptRange('11-end', 20);
+  assert.deepEqual(rangeImages, [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+
+  // 11- (trailing dash implies end)
+  const rangeOpenEnd = parsePromptRange('11-', 20);
+  assert.deepEqual(rangeOpenEnd, [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+
+  // all
+  const rangeAll = parsePromptRange('all', 5);
+  assert.deepEqual(rangeAll, [0, 1, 2, 3, 4]);
+
+  // single item
+  const rangeSingle = parsePromptRange('5', 10);
+  assert.deepEqual(rangeSingle, [4]);
+
+  // mixed comma separated slices: 1-3, 5, 8-end
+  const rangeMixed = parsePromptRange('1-3, 5, 8-end', 10);
+  assert.deepEqual(rangeMixed, [0, 1, 2, 4, 7, 8, 9]);
+
+  // out of bounds clamped safely
+  const rangeClamped = parsePromptRange('1-999', 8);
+  assert.equal(rangeClamped.length, 8);
+  assert.equal(rangeClamped[0], 0);
+  assert.equal(rangeClamped[7], 7);
+
+  // invalid / empty returns empty array
+  assert.deepEqual(parsePromptRange('', 20), []);
+  assert.deepEqual(parsePromptRange('invalid', 20), []);
+  assert.deepEqual(parsePromptRange('1-10', 0), []);
+});
+
+test('index.html renders Copy Prompts split button and custom range dropdown menu', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  assert.ok(html.includes('id="pr-btn-copy-all"'), 'Should contain #pr-btn-copy-all');
+  assert.ok(html.includes('id="pr-btn-copy-dropdown"'), 'Should contain #pr-btn-copy-dropdown');
+  assert.ok(html.includes('id="pr-copy-menu"'), 'Should contain #pr-copy-menu');
+  assert.ok(html.includes('id="pr-input-copy-range"'), 'Should contain #pr-input-copy-range');
+  assert.ok(html.includes('id="pr-btn-copy-range-exec"'), 'Should contain #pr-btn-copy-range-exec');
+  assert.ok(html.includes('1-10 (Video)'), 'Should contain 1-10 (Video) quick preset pill');
+  assert.ok(html.includes('11-End (Images)'), 'Should contain 11-End (Images) quick preset pill');
+});

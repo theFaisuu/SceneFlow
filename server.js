@@ -666,7 +666,7 @@ app.get('/api/export/:jobId/stream', (req, res) => {
 });
 
 // ── SPA Page Routes & Fallback ────────────────────────────────────────────
-app.get(['/', '/voice', '/timing', '/prompts', '/images', '/studio'], (req, res) => {
+app.get(['/', '/voice', '/timing', '/prompts', '/images', '/video', '/videos', '/studio'], (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 

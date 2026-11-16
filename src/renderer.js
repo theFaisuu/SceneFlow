@@ -257,9 +257,13 @@ async function render(job, onProgress, jobId) {
 
     // Input files
     for (const clip of batch) {
+      const isVideo = clip.type === 'video' || (clip.path && /\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(clip.path));
       if (clip.type === 'gap' || !clip.path) {
         // Black frame input
         args.push('-f', 'lavfi', '-i', `color=black:s=${w}x${h}:r=${fps}`);
+      } else if (isVideo) {
+        // Trim video input to clip duration
+        args.push('-t', String(Math.max(0.1, clip.durationSec)), '-i', clip.path);
       } else {
         // Loop image for its duration
         args.push('-loop', '1', '-t', String(Math.max(0.1, clip.durationSec)), '-i', clip.path);
@@ -274,15 +278,16 @@ async function render(job, onProgress, jobId) {
       const clip = batch[i];
       const dur = Math.max(0.1, clip.durationSec);
       const frames = Math.max(1, Math.round(dur * fps));
+      const isVideo = clip.type === 'video' || (clip.path && /\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(clip.path));
 
       let motion = clip.motion === 'auto'
         ? pickAutoMotion(clips.indexOf(clip), motionEffects)
         : clip.motion || 'none';
 
-      if (clip.type === 'gap') motion = 'none';
+      if (clip.type === 'gap' || isVideo) motion = 'none';
 
       let f;
-      if (motion !== 'none' && clip.type !== 'gap') {
+      if (motion !== 'none' && clip.type !== 'gap' && !isVideo) {
         const zoompanFilter = buildZoompan(motion, dur, w, h, motionSpeed, fps);
         // 2x upscale eliminates integer sub-pixel rounding jitter so zoom & pan are completely smooth
         const scaleFirst = buildScaleFilter(w * 2, h * 2, fitMode);

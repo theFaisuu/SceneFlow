@@ -97,6 +97,9 @@ const LEGACY_TAB_MAP = {
   'image': 'images',
   'image-batch': 'images',
   'images': 'images',
+  'video': 'video',
+  'videos': 'video',
+  'video-batch': 'video',
   'frame-hunter': 'studio',
   'studio': 'studio'
 };
@@ -106,6 +109,7 @@ const TAB_META = {
   timing: { btnId: 'nav-btn-timing', pageId: 'page-timing', route: '/timing', title: 'SceneFlow — Timing', idleIconClass: 'text-[#8A99A8]' },
   prompts: { btnId: 'nav-btn-prompts', pageId: 'page-prompts', route: '/prompts', title: 'SceneFlow — Prompts', idleIconClass: 'text-[#8A99A8]' },
   images: { btnId: 'nav-btn-images', pageId: 'page-images', route: '/images', title: 'SceneFlow — Images', idleIconClass: 'text-[#8A99A8]' },
+  video: { btnId: 'nav-btn-video', pageId: 'page-video', route: '/video', title: 'SceneFlow — Video', idleIconClass: 'text-[#8A99A8]' },
   studio: { btnId: 'nav-btn-studio', pageId: 'page-studio', route: '/studio', title: 'SceneFlow — Studio', idleIconClass: 'text-[#8A99A8]' }
 };
 

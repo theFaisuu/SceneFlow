@@ -334,3 +334,17 @@ test('Render completion hides Cancel Render and wires Play Video inline player w
   assert.equal(appJs.includes('/api/open-file'), false, 'Play Video should not call non-existent /api/open-file');
   assert.ok(appJs.includes("$('btn-cancel-render').classList.add('hidden')"), 'Completion/error should hide Cancel Render button');
 });
+
+test('Studio preview supports video clips via <video id="preview-frame-video"> and renders video frame in thumbnail', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'style.css'), 'utf8');
+  const appJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+
+  assert.ok(html.includes('id="preview-frame-video"'), 'caption-preview-box must contain <video id="preview-frame-video">');
+  assert.ok(html.includes('id="preview-frame-img"'), 'caption-preview-box must contain <img id="preview-frame-img">');
+  assert.ok(css.includes('.preview-frame-video'), 'style.css must style .preview-frame-video with object-fit: cover');
+
+  assert.ok(appJs.includes('updatePreviewFrameDisplay'), 'app.js must define updatePreviewFrameDisplay');
+  assert.ok(appJs.includes('vidEl.dataset.currentSrc !== src'), 'app.js must manage video source loading');
+  assert.ok(appJs.includes('Math.abs(vidEl.currentTime - localTime)'), 'app.js must sync video currentTime during seek/playback');
+});

@@ -1419,14 +1419,204 @@ function renderOutputUI() {
       }
     };
   });
+
+  updateCopyRangePresetsUI();
+}
+
+export function parsePromptRange(rangeStr, totalCount) {
+  if (!totalCount || totalCount <= 0) return [];
+  if (!rangeStr || typeof rangeStr !== 'string' || !rangeStr.trim()) return [];
+
+  const raw = rangeStr.trim().toLowerCase();
+  if (raw === 'all' || raw === '1-end' || raw === '1-*') {
+    return Array.from({ length: totalCount }, (_, i) => i);
+  }
+
+  const indices = new Set();
+  const parts = raw.split(/[,;\s]+/).filter(Boolean);
+
+  for (const part of parts) {
+    if (part.includes('-')) {
+      const sides = part.split('-');
+      const startRaw = sides[0]?.trim();
+      const endRaw = sides[1]?.trim();
+
+      let start = parseInt(startRaw, 10);
+      let end;
+      if (endRaw === 'end' || endRaw === 'last' || endRaw === '*' || endRaw === '') {
+        end = totalCount;
+      } else {
+        end = parseInt(endRaw, 10);
+      }
+
+      if (isNaN(start) && (endRaw === 'end' || endRaw === 'last')) {
+        start = 1;
+      }
+      if (isNaN(start)) continue;
+      if (isNaN(end)) end = totalCount;
+
+      start = Math.max(1, Math.min(totalCount, start));
+      end = Math.max(1, Math.min(totalCount, end));
+
+      const min = Math.min(start, end);
+      const max = Math.max(start, end);
+
+      for (let i = min; i <= max; i++) {
+        indices.add(i - 1);
+      }
+    } else {
+      const single = parseInt(part, 10);
+      if (!isNaN(single) && single >= 1 && single <= totalCount) {
+        indices.add(single - 1);
+      }
+    }
+  }
+
+  return Array.from(indices).sort((a, b) => a - b);
+}
+
+export function updateCopyRangePresetsUI() {
+  const totalEl = $('pr-copy-menu-total');
+  const presetsContainer = $('pr-copy-presets');
+  const total = state.outputItems ? state.outputItems.length : 0;
+
+  if (totalEl) {
+    totalEl.textContent = `${total} prompt${total === 1 ? '' : 's'}`;
+  }
+
+  if (presetsContainer) {
+    if (total <= 0) {
+      presetsContainer.innerHTML = '<span class="text-slate-500 text-[10px]">No prompts generated yet</span>';
+      return;
+    }
+
+    const pills = [];
+    if (total >= 4) {
+      const half = Math.ceil(total / 2);
+      pills.push(`<button type="button" class="pr-preset-pill px-2 py-0.5 rounded bg-obsidian-surface hover:bg-teal-500/15 hover:text-teal-300 border border-obsidian-border text-[11px] font-mono text-slate-300 transition cursor-pointer" data-range="1-${half}">1-${half} (Video)</button>`);
+      pills.push(`<button type="button" class="pr-preset-pill px-2 py-0.5 rounded bg-obsidian-surface hover:bg-teal-500/15 hover:text-teal-300 border border-obsidian-border text-[11px] font-mono text-slate-300 transition cursor-pointer" data-range="${half + 1}-end">${half + 1}-End (Images)</button>`);
+    } else if (total > 1) {
+      pills.push(`<button type="button" class="pr-preset-pill px-2 py-0.5 rounded bg-obsidian-surface hover:bg-teal-500/15 hover:text-teal-300 border border-obsidian-border text-[11px] font-mono text-slate-300 transition cursor-pointer" data-range="1">1 (Video)</button>`);
+      pills.push(`<button type="button" class="pr-preset-pill px-2 py-0.5 rounded bg-obsidian-surface hover:bg-teal-500/15 hover:text-teal-300 border border-obsidian-border text-[11px] font-mono text-slate-300 transition cursor-pointer" data-range="2-end">2-End (Images)</button>`);
+    }
+    pills.push(`<button type="button" class="pr-preset-pill px-2 py-0.5 rounded bg-obsidian-surface hover:bg-slate-700 hover:text-white border border-obsidian-border text-[11px] font-mono text-slate-400 transition cursor-pointer" data-range="all">All (1-${total})</button>`);
+
+    presetsContainer.innerHTML = pills.join('');
+
+    presetsContainer.querySelectorAll('.pr-preset-pill').forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const range = btn.dataset.range;
+        const input = $('pr-input-copy-range');
+        if (input) input.value = range;
+        if (typeof window.__sfExecuteCopyRange === 'function') {
+          window.__sfExecuteCopyRange(range);
+        }
+        const menu = $('pr-copy-menu');
+        if (menu) menu.classList.add('hidden');
+      };
+    });
+  }
 }
 
 function initOutputActionsUI() {
   const copyAllBtn = $('pr-btn-copy-all');
+  const copyAllLabel = $('pr-copy-all-label');
+  const copyDropdownBtn = $('pr-btn-copy-dropdown');
+  const copyMenu = $('pr-copy-menu');
+  const copyRangeInput = $('pr-input-copy-range');
+  const copyRangeExecBtn = $('pr-btn-copy-range-exec');
   const downloadBtn = $('pr-btn-download-txt');
   const saveProjBtn = $('pr-btn-save-project');
   const openProjBtn = $('pr-btn-open-project');
   const projFileInput = $('pr-input-open-project');
+
+  function openCopyMenu() {
+    if (!copyMenu) return;
+    copyMenu.classList.remove('hidden');
+    updateCopyRangePresetsUI();
+    if (copyRangeInput) {
+      setTimeout(() => copyRangeInput.focus(), 40);
+    }
+  }
+
+  function closeCopyMenu() {
+    if (copyMenu) copyMenu.classList.add('hidden');
+  }
+
+  function executeCopyRange(rangeStr) {
+    if (!state.outputItems.length) {
+      showToast('No prompts to copy.', 'info');
+      return false;
+    }
+    const total = state.outputItems.length;
+    const indices = parsePromptRange(rangeStr, total);
+    if (!indices.length) {
+      showToast('Please enter a valid range (e.g. 1-10 or 11-end)', 'warning');
+      return false;
+    }
+
+    const selectedItems = indices.map(i => state.outputItems[i]).filter(Boolean);
+    const delimiter = state.blankLines ? '\n\n' : '\n';
+    const text = selectedItems.map(it => `${it.rawTime} ${it.promptText}`).join(delimiter);
+    copyToClipboard(text);
+
+    const rangeLabel = indices.length === 1
+      ? `#${indices[0] + 1}`
+      : `#${indices[0] + 1}–#${indices[indices.length - 1] + 1}`;
+    showToast(`Copied ${selectedItems.length} prompts (${rangeLabel}) to clipboard!`, 'success');
+
+    if (copyAllLabel) {
+      const origText = 'Copy All Prompts';
+      copyAllLabel.textContent = `Copied ${rangeLabel}!`;
+      setTimeout(() => { if (copyAllLabel) copyAllLabel.textContent = origText; }, 2200);
+    }
+    return true;
+  }
+
+  window.__sfExecuteCopyRange = executeCopyRange;
+
+  if (copyDropdownBtn) {
+    copyDropdownBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (copyMenu && !copyMenu.classList.contains('hidden')) {
+        closeCopyMenu();
+      } else {
+        openCopyMenu();
+      }
+    };
+  }
+
+  if (copyRangeExecBtn) {
+    copyRangeExecBtn.onclick = (e) => {
+      e.stopPropagation();
+      const val = copyRangeInput?.value || '';
+      executeCopyRange(val);
+      closeCopyMenu();
+    };
+  }
+
+  if (copyRangeInput) {
+    copyRangeInput.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        executeCopyRange(copyRangeInput.value);
+        closeCopyMenu();
+      } else if (e.key === 'Escape') {
+        closeCopyMenu();
+      }
+    };
+  }
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('click', (e) => {
+      if (copyMenu && !copyMenu.classList.contains('hidden')) {
+        if (!e.target.closest('#pr-copy-menu') && !e.target.closest('#pr-btn-copy-dropdown')) {
+          closeCopyMenu();
+        }
+      }
+    });
+  }
 
   // Copy All
   if (copyAllBtn) {
@@ -1440,6 +1630,12 @@ function initOutputActionsUI() {
       const text = state.rawOutputText || fallback;
       copyToClipboard(text);
       showToast(`Copied all ${state.outputItems.length} prompts to clipboard!`, 'success');
+
+      if (copyAllLabel) {
+        const origText = 'Copy All Prompts';
+        copyAllLabel.textContent = 'Copied All!';
+        setTimeout(() => { if (copyAllLabel) copyAllLabel.textContent = origText; }, 2200);
+      }
     };
   }
 

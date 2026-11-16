@@ -465,6 +465,7 @@ main {
   background: rgba(0,0,0,0.7);
   padding: 2px 4px;
   border-radius: 3px;
+  z-index: 10;
 }
 
 .thumb-remove {
@@ -482,6 +483,7 @@ main {
   display: none;
   align-items: center;
   justify-content: center;
+  z-index: 20;
 }
 
 .media-thumb-wrap:hover .thumb-remove {
@@ -501,6 +503,7 @@ main {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  z-index: 15;
 }
 
 /* Audio Row */
@@ -1280,7 +1283,8 @@ input[type=range] {
   background: var(--surface);
 }
 
-.preview-frame-img {
+.preview-frame-img,
+.preview-frame-video {
   width: 100%;
   height: 100%;
   object-fit: cover !important;
@@ -2027,7 +2031,9 @@ input[type=range] {
 #page-prompts,
 #page-prompts *,
 #page-images,
-#page-images * {
+#page-images *,
+#page-video,
+#page-video * {
   box-shadow: none !important;
 }
 

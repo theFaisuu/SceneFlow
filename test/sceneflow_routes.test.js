@@ -11,7 +11,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
-test('navbar and pages follow exact order Voice → Timing → Prompts → Images → Studio', () => {
+test('navbar and pages follow exact order Voice → Timing → Prompts → Images → Video → Studio', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
   const navOrder = [
@@ -19,6 +19,7 @@ test('navbar and pages follow exact order Voice → Timing → Prompts → Image
     html.indexOf('id="nav-btn-timing"'),
     html.indexOf('id="nav-btn-prompts"'),
     html.indexOf('id="nav-btn-images"'),
+    html.indexOf('id="nav-btn-video"'),
     html.indexOf('id="nav-btn-studio"')
   ];
   navOrder.forEach((pos, idx) => assert.ok(pos > 0, `Nav button #${idx + 1} missing`));
@@ -31,6 +32,7 @@ test('navbar and pages follow exact order Voice → Timing → Prompts → Image
     html.indexOf('id="page-timing"'),
     html.indexOf('id="page-prompts"'),
     html.indexOf('id="page-images"'),
+    html.indexOf('id="page-video"'),
     html.indexOf('id="page-studio"')
   ];
   pageOrder.forEach((pos, idx) => assert.ok(pos > 0, `Page container #${idx + 1} missing`));
@@ -87,6 +89,9 @@ test('resolveTabTarget normalizes all new and legacy paths/hashes cleanly (defau
   assert.equal(mod.resolveTabTarget('/prompt-mapper'), 'prompts');
   assert.equal(mod.resolveTabTarget('/images'), 'images');
   assert.equal(mod.resolveTabTarget('/image'), 'images');
+  assert.equal(mod.resolveTabTarget('/video'), 'video');
+  assert.equal(mod.resolveTabTarget('/videos'), 'video');
+  assert.equal(mod.resolveTabTarget('/video-batch'), 'video');
   assert.equal(mod.resolveTabTarget('/studio'), 'studio');
   assert.equal(mod.resolveTabTarget('/frame-hunter'), 'studio');
   assert.equal(mod.resolveTabTarget('#frame-hunter'), 'studio');
@@ -119,7 +124,7 @@ test('Express server redirects every old URL to its new SceneFlow URL and serves
       assert.equal(res.headers.get('location'), expectedTarget, `${oldUrl} should redirect to ${expectedTarget}`);
     }
 
-    for (const route of ['/', '/voice', '/timing', '/prompts', '/images', '/studio']) {
+    for (const route of ['/', '/voice', '/timing', '/prompts', '/images', '/video', '/studio']) {
       const res = await fetch(`${base}${route}`, { redirect: 'manual' });
       assert.equal(res.status, 200, `${route} should serve HTTP 200`);
       const text = await res.text();
