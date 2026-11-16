@@ -25,6 +25,7 @@ function toASSTime(sec) {
  * Returns: [{ startSec, endSec, duration, timeSec, text }]
  */
 function parseCaptionText(raw) {
+  if (!raw || typeof raw !== 'string') return [];
   const lines = [];
   const lineRe = /\((\d+):(\d+)(?::(\d+))?\)\s*(.+)/g;
   let m;
@@ -36,11 +37,46 @@ function parseCaptionText(raw) {
     lines.push({ startSec: timeSec, timeSec, text: text.trim() });
   }
 
-  // Calculate clean non-overlapping endSec for each line
-  for (let i = 0; i < lines.length; i++) {
-    const nextStart = (i + 1 < lines.length) ? lines[i + 1].startSec : lines[i].startSec + 3.5;
-    lines[i].endSec = nextStart;
-    lines[i].duration = Math.max(0.1, nextStart - lines[i].startSec);
+  if (lines.length > 0) {
+    // Calculate clean non-overlapping endSec for each line
+    for (let i = 0; i < lines.length; i++) {
+      const nextStart = (i + 1 < lines.length) ? lines[i + 1].startSec : lines[i].startSec + 3.5;
+      lines[i].endSec = nextStart;
+      lines[i].duration = Math.max(0.1, nextStart - lines[i].startSec);
+    }
+    return lines;
+  }
+
+  // Fallback: parse SubRip (.srt) timestamp format: 00:00:00,000 --> 00:00:03,300
+  if (raw.includes('-->')) {
+    const srtBlocks = raw.replace(/\r\n/g, '\n').split(/\n\s*\n+/);
+    for (const block of srtBlocks) {
+      const rows = block.trim().split('\n').map(r => r.trim()).filter(Boolean);
+      if (rows.length < 2) continue;
+      const arrowRowIdx = rows.findIndex(r => r.includes('-->'));
+      if (arrowRowIdx === -1) continue;
+      const timeMatch = rows[arrowRowIdx].match(/(\d+):(\d+):(\d+)[,\.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,\.](\d+)/);
+      if (!timeMatch) continue;
+      const startSec = parseInt(timeMatch[1], 10) * 3600 +
+                       parseInt(timeMatch[2], 10) * 60 +
+                       parseInt(timeMatch[3], 10) +
+                       parseInt(timeMatch[4], 10) / 1000;
+      const endSec = parseInt(timeMatch[5], 10) * 3600 +
+                     parseInt(timeMatch[6], 10) * 60 +
+                     parseInt(timeMatch[7], 10) +
+                     parseInt(timeMatch[8], 10) / 1000;
+      const text = rows.slice(arrowRowIdx + 1).join(' ').replace(/<[^>]+>/g, '').trim();
+      if (text) {
+        lines.push({
+          startSec,
+          endSec,
+          timeSec: Math.floor(startSec),
+          duration: Math.max(0.1, endSec - startSec),
+          text
+        });
+      }
+    }
+    return lines;
   }
 
   return lines;
@@ -223,62 +259,66 @@ function buildASSStyle(style, color, size, position, videoWidth = 1920, videoHei
 
 function chunkWords(words, option = 'all') {
   if (!words || !words.length) return [];
-  if (!option || option === 'all') return [words];
+  if (!option || option === 'all' || option === 'full') return [words];
 
   // 1 word per line (single-word pop / focus)
   if (option === '1' || option === 1) {
     return words.map(w => [w]);
   }
 
-  // Smart natural splitting: splits at natural clause punctuation, balances 2-4 words, avoids 1-word orphans
-  if (option === 'smart' || option === '3-4') {
+  // Smart natural splitting (4-6 words): splits at natural clause punctuation, balances 4-6 words, avoids orphans
+  if (option === 'smart' || option === '4-6' || option === '3-4') {
     const n = words.length;
-    if (n <= 4) return [words];
+    if (n <= 6) return [words];
 
+    const targetChunks = Math.max(2, Math.ceil(n / 6));
     const chunks = [];
-    let cur = [];
+    let start = 0;
 
-    for (let i = 0; i < n; i++) {
-      const w = words[i];
-      cur.push(w);
-      const remaining = n - (i + 1);
+    while (start < n) {
+      const remainingTotal = n - start;
+      const chunksLeft = targetChunks - chunks.length;
 
-      // Check if word ends with clause/sentence punctuation
-      const rawText = (typeof w === 'string') ? w : (w.word || '');
-      const hasPausePunctuation = /[,\;:—\.\?!]$/.test(rawText.trim());
-
-      const hitNaturalPause = hasPausePunctuation && cur.length >= 2;
-      const hitMaxLength = cur.length >= 4;
-      const hitPreferredLength = cur.length >= 3;
-
-      // Break chunk if we hit natural pause, reached 4 words, or reached 3 words without leaving a 1-word orphan
-      if ((hitNaturalPause || hitMaxLength || (hitPreferredLength && remaining !== 1)) && remaining !== 1) {
-        chunks.push(cur);
-        cur = [];
+      if (chunksLeft <= 1 || remainingTotal <= 6) {
+        chunks.push(words.slice(start));
+        break;
       }
-    }
 
-    if (cur.length > 0) {
-      if (cur.length === 1 && chunks.length > 0) {
-        // Prevent single-word orphan by merging with the previous chunk
-        chunks[chunks.length - 1].push(...cur);
-      } else {
-        chunks.push(cur);
+      const idealEnd = start + Math.min(6, Math.max(4, Math.round(remainingTotal / chunksLeft)));
+
+      let bestSplit = idealEnd;
+      const minSplit = start + 3;
+      const maxSplit = Math.min(n - 3, start + 6);
+
+      for (let i = maxSplit; i >= minSplit; i--) {
+        const w = words[i - 1];
+        const rawText = (typeof w === 'string') ? w : (w.word || '');
+        if (/[,\;:—\.\?!]$/.test(rawText.trim())) {
+          bestSplit = i;
+          break;
+        }
       }
+
+      if (n - bestSplit < 3) bestSplit = n - 3;
+      bestSplit = Math.min(start + 6, Math.max(start + 3, bestSplit));
+
+      chunks.push(words.slice(start, bestSplit));
+      start = bestSplit;
     }
 
     return chunks;
   }
 
-  // Fixed word count: 2, 3, 4, etc.
+  // Fixed word count: 2, 3, 4, 5, 6, etc.
   const chunkSize = parseInt(option, 10);
   if (!chunkSize || isNaN(chunkSize) || chunkSize <= 0) return [words];
 
   const chunks = [];
   for (let i = 0; i < words.length; i += chunkSize) {
     const slice = words.slice(i, i + chunkSize);
-    // If the last chunk is a single orphan word and we have a preceding chunk, merge it
-    if (slice.length === 1 && chunks.length > 0) {
+    // If the last chunk is an orphan (<= 1 word for 3-4, or <= 2 words for 5-6), merge it
+    const minOrphan = chunkSize >= 5 ? 2 : 1;
+    if (slice.length <= minOrphan && chunks.length > 0) {
       chunks[chunks.length - 1].push(...slice);
     } else {
       chunks.push(slice);

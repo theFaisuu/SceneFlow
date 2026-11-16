@@ -13,7 +13,7 @@ const zlib = require('zlib');
 const http = require('node:http');
 
 const { extractZipMedia } = require('../src/zip_extractor');
-const { generateASS, chunkWords } = require('../src/captions');
+const { generateASS, chunkWords, parseCaptionText } = require('../src/captions');
 const settingsStore = require('../src/settings');
 const app = require('../server');
 
@@ -207,12 +207,12 @@ test('Studio Section 03 HTML & captions.js support full line default, No Caption
   assert.match(sec3, /<textarea[^>]*id="caption-text"[^>]*class="[^"]*flex-1/, 'Caption textarea should use flex-1 to stretch to bottom footer');
 
   assert.match(sec3, /<select[^>]*id="s-caption-segment"/, 'Segment per line dropdown should be present in Section 03 header');
-  assert.match(sec3, /<option[^>]*value="all"[^>]*selected>Full Line \(Default\)<\/option>/, 'Segment selector should have Full Line (Default) selected by default');
-  assert.match(sec3, /<option[^>]*value="smart">Smart \(2-4 Words\)<\/option>/, 'Segment selector should include Smart option');
-  assert.match(sec3, /<option[^>]*value="1">1 Word \(Pop\)<\/option>/, 'Segment selector should include 1 Word option');
-  assert.match(sec3, /<option[^>]*value="2">2 Words<\/option>/, 'Segment selector should include 2 Words option');
+  assert.match(sec3, /<option[^>]*value="all"[^>]*selected>Full Sentence<\/option>/, 'Segment selector should have Full Sentence selected by default');
+  assert.match(sec3, /<option[^>]*value="smart">Smart \(4-6 Words\)<\/option>/, 'Segment selector should include Smart (4-6 Words) option');
   assert.match(sec3, /<option[^>]*value="3">3 Words<\/option>/, 'Segment selector should include 3 Words option');
   assert.match(sec3, /<option[^>]*value="4">4 Words<\/option>/, 'Segment selector should include 4 Words option');
+  assert.match(sec3, /<option[^>]*value="5">5 Words<\/option>/, 'Segment selector should include 5 Words option');
+  assert.match(sec3, /<option[^>]*value="6">6 Words<\/option>/, 'Segment selector should include 6 Words option');
 
   const sampleWords = 'You have been exhausted all day long'.split(' ').map((w, i) => ({
     word: w,
@@ -224,12 +224,12 @@ test('Studio Section 03 HTML & captions.js support full line default, No Caption
   }));
   assert.equal(chunkWords(sampleWords).length, 1, 'Default chunkWords should keep the full line in 1 chunk');
   assert.equal(chunkWords(sampleWords, 'all').length, 1, 'chunkWords with all should keep the full line in 1 chunk');
-  assert.equal(chunkWords(sampleWords, '1').length, 7, 'chunkWords with 1 should divide into 7 1-word chunks');
-  assert.equal(chunkWords(sampleWords, '2').length, 3, 'chunkWords with 2 should divide 7 words into 3 chunks [2, 2, 3] avoiding single-word orphans');
   assert.equal(chunkWords(sampleWords, '3').length, 2, 'chunkWords with 3 should divide 7 words into 2 chunks [3, 4] avoiding single-word orphans');
-  assert.equal(chunkWords(sampleWords, 'smart').length, 2, 'chunkWords with smart should divide 7 words into 2 balanced chunks');
+  assert.equal(chunkWords(sampleWords, '4').length, 2, 'chunkWords with 4 should divide 7 words into 2 chunks [4, 3]');
+  assert.equal(chunkWords(sampleWords, '5').length, 1, 'chunkWords with 5 should merge 7 words [5, 2] into 1 chunk to avoid orphan');
+  assert.equal(chunkWords(sampleWords, 'smart').length, 2, 'chunkWords with smart should divide 7 words into 2 balanced chunks [4, 3]');
 
-  // Verify smart punctuation clause splitting
+  // Verify smart punctuation clause splitting (4-6 words)
   const clauseWords = "You've been exhausted all day, and yet your mind switches on".split(' ').map((w, i) => ({
     word: w,
     startSec: i * 0.3,
@@ -239,8 +239,9 @@ test('Studio Section 03 HTML & captions.js support full line default, No Caption
     lineEnd: 3.3,
   }));
   const smartChunks = chunkWords(clauseWords, 'smart');
-  assert.equal(smartChunks.length, 4, 'Smart chunking should split 11 words at punctuation comma into 4 natural segments');
-  assert.equal(smartChunks[1].map(w => w.word).join(' '), 'all day,', 'Smart chunking should split at comma clause');
+  assert.equal(smartChunks.length, 2, 'Smart 4-6 words chunking should split 11 words at comma into 2 balanced segments');
+  assert.equal(smartChunks[0].map(w => w.word).join(' '), "You've been exhausted all day,", 'Smart chunking should split at comma clause');
+  assert.equal(smartChunks[1].map(w => w.word).join(' '), 'and yet your mind switches on', 'Second smart chunk has 6 words');
 
   const ass = generateASS(sampleWords, {
     style: 'beast',
@@ -262,6 +263,16 @@ test('Studio Section 03 HTML & captions.js support full line default, No Caption
 
   const assSmart = generateASS(clauseWords, { style: 'bold', wordsPerLine: 'smart' });
   assert.ok(assSmart.includes('ALL DAY,'), 'Smart ASS should contain natural clause segment');
+
+  // Verify parseCaptionText seamlessly parses SubRip (.srt) timestamp format as well as (m:ss)
+  const srtSample = '1\n00:00:00,000 --> 00:00:03,300\nYou have been exhausted all day\n\n2\n00:00:03,300 --> 00:00:06,130\nthe moment your head hits';
+  const parsedSrt = parseCaptionText(srtSample);
+  assert.equal(parsedSrt.length, 2, 'parseCaptionText should parse 2 SRT blocks');
+  assert.equal(parsedSrt[0].text, 'You have been exhausted all day');
+  assert.equal(parsedSrt[0].startSec, 0);
+  assert.equal(parsedSrt[0].endSec, 3.3);
+  assert.equal(parsedSrt[1].startSec, 3.3);
+  assert.equal(parsedSrt[1].endSec, 6.13);
 
   const sec5Start = html.indexOf('<!-- SECTION 5', sec4Start);
   assert.ok(sec5Start > sec4Start, 'Expected Studio Section 04 bounds');
