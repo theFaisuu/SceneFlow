@@ -5,15 +5,28 @@
 'use strict';
 
 const { execSync } = require('child_process');
+const { findWorkingFfmpeg, testFfmpegExecutable } = require('../bin/verify-ffmpeg');
 
 let _cachedEncoder = null;
+let _cachedFfmpegPath = null;
 
-function getFfmpegPath() {
-  try {
-    return require('ffmpeg-static');
-  } catch {
-    return 'ffmpeg';
+function getFfmpegPath(forceRefresh = false) {
+  if (!forceRefresh && _cachedFfmpegPath && testFfmpegExecutable(_cachedFfmpegPath)) {
+    return _cachedFfmpegPath;
   }
+
+  const working = findWorkingFfmpeg();
+  if (working) {
+    _cachedFfmpegPath = working;
+    return _cachedFfmpegPath;
+  }
+
+  try {
+    const staticPath = require('ffmpeg-static');
+    if (staticPath) return staticPath;
+  } catch {}
+
+  return 'ffmpeg';
 }
 
 /**

@@ -5,10 +5,12 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, execSync } = require('child_process');
 
+const os = require('os');
+
 const PROJECT_ROOT = path.join(__dirname, '..');
 const INSTALLER_URL = 'https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe';
 const INSTALLER_PATH = path.join(PROJECT_ROOT, 'temp_python_installer.exe');
-const LOCAL_PYTHON_PATH = path.join(process.env.LOCALAPPDATA || 'C:\\Users\\THE HAIDER\\AppData\\Local', 'Programs', 'Python', 'Python310', 'python.exe');
+const LOCAL_PYTHON_PATH = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'Python', 'Python310', 'python.exe');
 
 function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {

@@ -87,10 +87,20 @@ function getAudioDuration(filePath) {
     const timer = setTimeout(() => done(0), 4000);
     try {
       const ffprobeStatic = require('ffprobe-static');
-      const ffprobe = ffprobeStatic?.path || 'ffprobe';
-      const proc = spawn(ffprobe, [
-        '-v', 'quiet', '-print_format', 'json', '-show_format', filePath
-      ]);
+      let ffprobe = ffprobeStatic?.path || 'ffprobe';
+      if (path.isAbsolute(ffprobe) && (!fs.existsSync(ffprobe) || fs.statSync(ffprobe).size < 1000000)) {
+        ffprobe = 'ffprobe';
+      }
+      let proc;
+      try {
+        proc = spawn(ffprobe, [
+          '-v', 'quiet', '-print_format', 'json', '-show_format', filePath
+        ]);
+      } catch (spawnErr) {
+        clearTimeout(timer);
+        console.warn('ffprobe synchronous spawn error:', spawnErr.message);
+        return done(0);
+      }
       let out = '';
       if (proc.stdout) {
         proc.stdout.on('data', d => out += d);
@@ -121,8 +131,23 @@ function getAudioDuration(filePath) {
  */
 function runFfmpeg(args, totalDuration, onProgress, jobId) {
   return new Promise((resolve, reject) => {
-    const ffmpeg = getFfmpegPath();
-    const proc = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let ffmpeg = getFfmpegPath();
+    let proc;
+    try {
+      proc = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (spawnErr) {
+      // If EFTYPE or bad format, attempt forced refresh/fallback
+      if (spawnErr.code === 'EFTYPE' || spawnErr.code === 'ENOEXEC' || (spawnErr.message && spawnErr.message.includes('EFTYPE'))) {
+        try {
+          ffmpeg = getFfmpegPath(true);
+          proc = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        } catch (retryErr) {
+          return reject(new Error(`Failed to start FFmpeg (${ffmpeg}): ${retryErr.message}. The FFmpeg binary appears corrupt or incompatible (EFTYPE). Please run: node bin/verify-ffmpeg.js --repair`));
+        }
+      } else {
+        return reject(new Error(`Failed to start FFmpeg (${ffmpeg}): ${spawnErr.message}`));
+      }
+    }
 
     if (jobId) {
       activeJobs[jobId] = { proc, cancelled: false };

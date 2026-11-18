@@ -9,6 +9,7 @@
 const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { getModelStatus } = require('./whisper_models');
 
 const PROJECT_ROOT = path.join(__dirname, '..');
@@ -27,7 +28,7 @@ function findPython() {
   const venvLinux = path.join(PROJECT_ROOT, '.venv', 'bin', 'python');
   if (fs.existsSync(venvLinux)) return venvLinux;
 
-  const localAppData = process.env.LOCALAPPDATA || 'C:\\Users\\THE HAIDER\\AppData\\Local';
+  const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
   const candidates = [
     path.join(localAppData, 'Programs', 'Python', 'Python310', 'python.exe'),
     path.join(localAppData, 'Programs', 'Python', 'Python311', 'python.exe'),

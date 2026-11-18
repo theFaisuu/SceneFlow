@@ -16,7 +16,8 @@ const multer = require('multer');
 const { buildTimeline, parseFilename, formatTime } = require('./src/parser');
 const { parseCaptionText, spreadWords, writeASSFile } = require('./src/captions');
 const { render, cancelJob, RESOLUTION, QUALITY_PRESETS, getAudioDuration } = require('./src/renderer');
-const { probeEncoder } = require('./src/encoder');
+const { probeEncoder, getFfmpegPath } = require('./src/encoder');
+const { verifyFfmpeg } = require('./bin/verify-ffmpeg');
 const { pickFolder } = require('./src/dialog');
 const { extractZipMedia } = require('./src/zip_extractor');
 const settingsStore = require('./src/settings');
@@ -676,9 +677,23 @@ app.get('*', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
-  app.listen(PORT, () => {
+  app.listen(PORT, async () => {
     const url = `http://localhost:${PORT}`;
-    console.log(`\n🎬  SceneFlow running at ${url}\n`);
+    console.log(`\n🎬  SceneFlow running at ${url}`);
+
+    // Verify FFmpeg health on startup
+    try {
+      const ffmpeg = getFfmpegPath();
+      const enc = probeEncoder();
+      console.log(`🎥  FFmpeg Engine: ${path.basename(ffmpeg)} (${enc.label})\n`);
+    } catch {
+      console.warn('⚠️  FFmpeg check encountered an issue. Running auto-repair...');
+      try {
+        await verifyFfmpeg(true);
+      } catch (err) {
+        console.error('❌ Could not auto-repair FFmpeg:', err.message);
+      }
+    }
 
     // Automatically open default browser when starting locally
     if (!process.env.NO_OPEN && !process.env.VERCEL && process.env.NODE_ENV !== 'test') {
