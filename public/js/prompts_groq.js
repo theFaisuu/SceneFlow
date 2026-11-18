@@ -65,10 +65,10 @@ export async function fetchAvailableGroqModels(apiKey) {
 }
 
 /**
- * Shared Groq /chat/completions requester with dynamic 429 rate-limit backoff,
- * smart 8B fallback, and automatic 404 model recovery.
+ * Shared Groq /chat/completions requester with dynamic 429 rate-limit backoff
+ * (staying on the user's selected model) and automatic 404 model recovery.
  */
-async function requestGroqCompletion(apiKey, preferredModel, buildBody, { isVision = false, maxAttempts = 5, onStatus = null } = {}) {
+async function requestGroqCompletion(apiKey, preferredModel, buildBody, { isVision = false, maxAttempts = 6, onStatus = null } = {}) {
   const cleanKey = apiKey.trim();
   const url = `${GROQ_BASE_URL}/chat/completions`;
   let activeModel = preferredModel || (isVision ? GROQ_VISION_MODEL_PRIORITY[0] : 'llama-3.3-70b-versatile');
@@ -115,30 +115,25 @@ async function requestGroqCompletion(apiKey, preferredModel, buildBody, { isVisi
       }
     }
 
-    // Handle 429 Too Many Requests: Parse required wait time and back off smoothly
+    // Handle 429 Too Many Requests: Parse required wait time and back off smoothly on the same model
     if (res.status === 429 && attempts < maxAttempts) {
-      let waitMs = attempts * 3000;
+      let waitMs = attempts * 5000;
       const retryAfter = res.headers?.get ? res.headers.get('retry-after') : null;
       if (retryAfter && !isNaN(parseFloat(retryAfter))) {
         waitMs = Math.ceil(parseFloat(retryAfter) * 1000) + 1000;
       } else if (errDetail) {
-        const match = errDetail.match(/try again in ([\d\.]+)s/i);
-        if (match && match[1]) {
-          waitMs = Math.ceil(parseFloat(match[1]) * 1000) + 1000;
+        const minSecMatch = errDetail.match(/try again in (\d+)m([\d\.]+)s/i);
+        const secMatch = errDetail.match(/try again in ([\d\.]+)s/i);
+        if (minSecMatch) {
+          waitMs = Math.ceil((parseInt(minSecMatch[1], 10) * 60 + parseFloat(minSecMatch[2])) * 1000) + 1000;
+        } else if (secMatch && secMatch[1]) {
+          waitMs = Math.ceil(parseFloat(secMatch[1]) * 1000) + 1000;
         }
       }
-      waitMs = Math.min(25000, Math.max(2500, waitMs));
+      waitMs = Math.min(65000, Math.max(3000, waitMs));
 
-      // After 2 consecutive 429s on 70B model, seamlessly switch to high-TPM Llama 3.1 8B Instant (20,000 TPM)
-      if (attempts >= 2 && !isVision && activeModel !== 'llama-3.1-8b-instant') {
-        const fallbackFast = 'llama-3.1-8b-instant';
-        if (onStatus) {
-          onStatus(`Rate limit on ${activeModel}. Switching to ${fallbackFast} (20k TPM)...`);
-        }
-        activeModel = fallbackFast;
-        triedFallbackModels.add(fallbackFast);
-      } else if (onStatus) {
-        onStatus(`Rate limit cooldown: waiting ${(waitMs / 1000).toFixed(0)}s...`);
+      if (onStatus) {
+        onStatus(`Rate limit cooldown (${activeModel}): waiting ${(waitMs / 1000).toFixed(0)}s...`);
       }
 
       await sleep(waitMs);
@@ -362,7 +357,7 @@ CRITICAL RULES:
       temperature: 0.6,
       max_tokens: 2500
     }),
-    { maxAttempts: 5, onStatus }
+    { maxAttempts: 6, onStatus }
   );
 
   const rawJson = data?.choices?.[0]?.message?.content;
