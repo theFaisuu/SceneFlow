@@ -571,7 +571,20 @@ test('filterLinesFromTimestamp splits caption lines at start time without touchi
   assert.equal(r23b.toGenerate.length, 3);
   assert.equal(r23b.startSec, 23);
 
-  // 4. Start beyond end
+  // 4. Start with raw seconds string "23", "23s", or number 23
+  const r23c = filterLinesFromTimestamp(lines, '23');
+  assert.equal(r23c.toGenerate.length, 3);
+  assert.equal(r23c.startSec, 23);
+
+  const r23d = filterLinesFromTimestamp(lines, '23s');
+  assert.equal(r23d.toGenerate.length, 3);
+  assert.equal(r23d.startSec, 23);
+
+  const r23e = filterLinesFromTimestamp(lines, 23);
+  assert.equal(r23e.toGenerate.length, 3);
+  assert.equal(r23e.startSec, 23);
+
+  // 5. Start beyond end
   const rBeyond = filterLinesFromTimestamp(lines, '(5:00)');
   assert.equal(rBeyond.preserved.length, 7);
   assert.equal(rBeyond.toGenerate.length, 0);

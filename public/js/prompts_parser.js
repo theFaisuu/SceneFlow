@@ -13,21 +13,38 @@
  * @returns {number|null}
  */
 export function parseTimeString(str) {
-  if (!str || typeof str !== 'string') return null;
-  const clean = str.trim().replace(/^[\(\[\{]/, '').replace(/[\)\]\}]$/, '').trim();
-  const parts = clean.split(':').map(p => parseInt(p, 10));
-  if (parts.some(p => isNaN(p) || p < 0)) return null;
+  if (str === null || str === undefined) return null;
+  if (typeof str === 'number') {
+    return isNaN(str) || str < 0 ? null : Math.floor(str);
+  }
+  if (typeof str !== 'string') return null;
 
-  if (parts.length === 2) {
-    const [m, s] = parts;
-    if (s >= 60) return null;
-    return m * 60 + s;
+  const clean = str.trim().replace(/^[\(\[\{]/, '').replace(/[\)\]\}]$/, '').trim();
+  if (!clean) return null;
+
+  // Case 1: Pure number of seconds or with "s" / "sec" (e.g. "25", "25s", "25 sec")
+  const secMatch = clean.match(/^(\d+(?:\.\d+)?)\s*(?:s|sec|seconds)?$/i);
+  if (secMatch && !clean.includes(':')) {
+    const val = parseFloat(secMatch[1]);
+    return isNaN(val) || val < 0 ? null : Math.floor(val);
   }
-  if (parts.length === 3) {
-    const [h, m, s] = parts;
-    if (m >= 60 || s >= 60) return null;
-    return h * 3600 + m * 60 + s;
+
+  // Case 2: Colon format "m:ss", "mm:ss", "h:mm:ss"
+  if (clean.includes(':')) {
+    const parts = clean.split(':').map(p => parseInt(p, 10));
+    if (parts.some(p => isNaN(p) || p < 0)) return null;
+
+    if (parts.length === 2) {
+      const [m, s] = parts;
+      return m * 60 + s;
+    }
+    if (parts.length === 3) {
+      const [h, m, s] = parts;
+      if (m >= 60 || s >= 60) return null;
+      return h * 3600 + m * 60 + s;
+    }
   }
+
   return null;
 }
 

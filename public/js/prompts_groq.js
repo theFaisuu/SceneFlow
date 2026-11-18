@@ -65,9 +65,10 @@ export async function fetchAvailableGroqModels(apiKey) {
 }
 
 /**
- * Shared Groq /chat/completions requester with 429 retry and automatic 404 model fallback.
+ * Shared Groq /chat/completions requester with dynamic 429 rate-limit backoff,
+ * smart 8B fallback, and automatic 404 model recovery.
  */
-async function requestGroqCompletion(apiKey, preferredModel, buildBody, { isVision = false, maxAttempts = 3 } = {}) {
+async function requestGroqCompletion(apiKey, preferredModel, buildBody, { isVision = false, maxAttempts = 5, onStatus = null } = {}) {
   const cleanKey = apiKey.trim();
   const url = `${GROQ_BASE_URL}/chat/completions`;
   let activeModel = preferredModel || (isVision ? GROQ_VISION_MODEL_PRIORITY[0] : 'llama-3.3-70b-versatile');
@@ -109,13 +110,38 @@ async function requestGroqCompletion(apiKey, preferredModel, buildBody, { isVisi
       if (nextModel) {
         activeModel = nextModel;
         triedFallbackModels.add(nextModel);
-        attempts = Math.max(0, attempts - 1); // Do not burn rate-limit retry count on model discovery
+        attempts = Math.max(0, attempts - 1); // Do not burn retry count on model discovery
         continue;
       }
     }
 
+    // Handle 429 Too Many Requests: Parse required wait time and back off smoothly
     if (res.status === 429 && attempts < maxAttempts) {
-      await sleep(attempts * 2000);
+      let waitMs = attempts * 3000;
+      const retryAfter = res.headers?.get ? res.headers.get('retry-after') : null;
+      if (retryAfter && !isNaN(parseFloat(retryAfter))) {
+        waitMs = Math.ceil(parseFloat(retryAfter) * 1000) + 1000;
+      } else if (errDetail) {
+        const match = errDetail.match(/try again in ([\d\.]+)s/i);
+        if (match && match[1]) {
+          waitMs = Math.ceil(parseFloat(match[1]) * 1000) + 1000;
+        }
+      }
+      waitMs = Math.min(25000, Math.max(2500, waitMs));
+
+      // After 2 consecutive 429s on 70B model, seamlessly switch to high-TPM Llama 3.1 8B Instant (20,000 TPM)
+      if (attempts >= 2 && !isVision && activeModel !== 'llama-3.1-8b-instant') {
+        const fallbackFast = 'llama-3.1-8b-instant';
+        if (onStatus) {
+          onStatus(`Rate limit on ${activeModel}. Switching to ${fallbackFast} (20k TPM)...`);
+        }
+        activeModel = fallbackFast;
+        triedFallbackModels.add(fallbackFast);
+      } else if (onStatus) {
+        onStatus(`Rate limit cooldown: waiting ${(waitMs / 1000).toFixed(0)}s...`);
+      }
+
+      await sleep(waitMs);
       continue;
     }
 
@@ -273,7 +299,8 @@ export async function generatePromptsBatch(apiKey, modelId = 'llama-3.3-70b-vers
     prevContext = [],
     nextContext = [],
     directives = '',
-    settings = {}
+    settings = {},
+    onStatus = null
   } = params;
 
   if (!apiKey || !apiKey.trim()) throw new Error('Groq API key is required');
@@ -333,9 +360,9 @@ CRITICAL RULES:
       ],
       response_format: { type: 'json_object' },
       temperature: 0.6,
-      max_tokens: 8000
+      max_tokens: 2500
     }),
-    { maxAttempts: 3 }
+    { maxAttempts: 5, onStatus }
   );
 
   const rawJson = data?.choices?.[0]?.message?.content;
